@@ -18,17 +18,17 @@ EXCEL_FILENAME = "nfl_team_sheet.xlsx"
 
 # 2️⃣ Load Data
 def load_team_data():
-    print(f"Loading team data from {NFL Team Sheet}...")
-    df = pd.read_excel(nfl_team_sheet.xlsx)
+    print(f"Loading team data from {EXCEL_FILENAME}...")
+    df = pd.read_excel(EXCEL_FILENAME)
     print("Data loaded successfully.\n")
     return df
 
 # 3️⃣ NFL Win Predictions (Team vs Team)
 def predict_game_winner(df, team1, team2):
-    """
-    Simple rules-based comparison using offense/defense scores.
-    """
     print(f"Predicting winner between {team1} and {team2}...")
+    if not any(df['Team'] == team1) or not any(df['Team'] == team2):
+        print("One or both teams not found!")
+        return None
     team1_stats = df[df['Team'] == team1].iloc[0]
     team2_stats = df[df['Team'] == team2].iloc[0]
 
