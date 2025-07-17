@@ -1,1 +1,119 @@
+"""
+nfl_bet_predictor.py
+
+A script to predict:
+1) NFL Win Predictions (Team vs Team)
+2) NFL Player Bet Predictions
+3) NFL Parlay Predictions
+
+Requirements:
+- pandas
+- openpyxl (for reading Excel)
+"""
+
+import pandas as pd
+
+# 1️⃣ Config - Hardcoded Excel filename
+EXCEL_FILENAME = "nfl_team_data.xlsx"
+
+# 2️⃣ Load Data
+def load_team_data():
+    print(f"Loading team data from {NFL Team Sheet}...")
+    df = pd.read_excel(EXCEL_FILENAME)
+    print("Data loaded successfully.\n")
+    return df
+
+# 3️⃣ NFL Win Predictions (Team vs Team)
+def predict_game_winner(df, team1, team2):
+    """
+    Simple rules-based comparison using offense/defense scores.
+    """
+    print(f"Predicting winner between {team1} and {team2}...")
+    team1_stats = df[df['Team'] == team1].iloc[0]
+    team2_stats = df[df['Team'] == team2].iloc[0]
+
+    team1_score = team1_stats['OffenseRating'] - team2_stats['DefenseRating']
+    team2_score = team2_stats['OffenseRating'] - team1_stats['DefenseRating']
+
+    print(f"{team1} adjusted score: {team1_score}")
+    print(f"{team2} adjusted score: {team2_score}")
+
+    if team1_score > team2_score:
+        winner = team1
+    else:
+        winner = team2
+
+    print(f"Predicted Winner: {winner}\n")
+    return winner
+
+# 4️⃣ NFL Player Bet Predictions
+def predict_player_prop(player_stats):
+    """
+    Rules-based prop prediction.
+    Example: predict OVER if average performance > line
+    """
+    print(f"Predicting player prop for {player_stats['Name']}...")
+    line = player_stats['BetLine']
+    avg = player_stats['AverageStat']
+
+    print(f"Bet Line: {line}, Player Average: {avg}")
+
+    if avg > line * 1.05:
+        prediction = "OVER"
+    elif avg < line * 0.95:
+        prediction = "UNDER"
+    else:
+        prediction = "NO BET"
+
+    print(f"Prediction: {prediction}\n")
+    return prediction
+
+# 5️⃣ NFL Parlay Prediction
+def predict_parlay(win_preds, player_preds):
+    """
+    Simple parlay odds calculation assuming independence.
+    """
+    print("Calculating Parlay Probability...")
+    # Assume win prediction ~65% confidence, player prop ~60% if 'OVER'/'UNDER'
+    win_prob = 0.65
+    player_prob = 0.60
+
+    win_count = sum(1 for p in win_preds if p is not None)
+    player_count = sum(1 for p in player_preds if p in ["OVER", "UNDER"])
+
+    combined_prob = (win_prob ** win_count) * (player_prob ** player_count)
+
+    print(f"Win Bets: {win_count}, Player Bets: {player_count}")
+    print(f"Estimated Parlay Success Probability: {combined_prob*100:.2f}%\n")
+    return combined_prob
+
+# 6️⃣ Main Function
+def main():
+    # Load Data
+    df = load_team_data()
+
+    # Example Team Matchups
+    team_matchups = [("Eagles", "Cowboys"), ("Chiefs", "Bills")]
+    win_preds = []
+    for t1, t2 in team_matchups:
+        winner = predict_game_winner(df, t1, t2)
+        win_preds.append(winner)
+
+    # Example Player Bets
+    # Normally you'd load these from a file or input
+    player_data = [
+        {"Name": "Patrick Mahomes", "BetLine": 280.5, "AverageStat": 295.2},
+        {"Name": "Christian McCaffrey", "BetLine": 82.5, "AverageStat": 77.1},
+    ]
+
+    player_preds = []
+    for p in player_data:
+        result = predict_player_prop(p)
+        player_preds.append(result)
+
+    # Parlay Prediction
+    predict_parlay(win_preds, player_preds)
+
+if __name__ == "__main__":
+    main()
 
