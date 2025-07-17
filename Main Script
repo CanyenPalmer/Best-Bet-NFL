@@ -14,12 +14,12 @@ Requirements:
 import pandas as pd
 
 # 1️⃣ Config - Hardcoded Excel filename
-EXCEL_FILENAME = "nfl_team_data.xlsx"
+EXCEL_FILENAME = "nfl_team_sheet.xlsx"
 
 # 2️⃣ Load Data
 def load_team_data():
     print(f"Loading team data from {NFL Team Sheet}...")
-    df = pd.read_excel(EXCEL_FILENAME)
+    df = pd.read_excel(nfl_team_sheet.xlsx)
     print("Data loaded successfully.\n")
     return df
 
