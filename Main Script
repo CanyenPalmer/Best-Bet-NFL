@@ -1,20 +1,20 @@
 """
 nfl_bet_predictor.py
 
-A script to predict:
+Predicts:
 1) NFL Win Predictions (Team vs Team)
 2) NFL Player Bet Predictions
 3) NFL Parlay Predictions
 
-Requirements:
+Requires:
 - pandas
-- openpyxl (for reading Excel)
+- openpyxl
 """
 
 import pandas as pd
 
-# 1️⃣ Config - Hardcoded Excel filename
-EXCEL_FILENAME = "nfl_team_sheet.xlsx"
+# 1️⃣ Config
+EXCEL_FILENAME = "nft_team_sheet.xlsx"  # Updated to match your file
 
 # 2️⃣ Load Data
 def load_team_data():
@@ -25,32 +25,38 @@ def load_team_data():
 
 # 3️⃣ NFL Win Predictions (Team vs Team)
 def predict_game_winner(df, team1, team2):
+    """
+    Predicts winner using Offense vs Opponent Defense ratings.
+    """
     print(f"Predicting winner between {team1} and {team2}...")
-    if not any(df['Team'] == team1) or not any(df['Team'] == team2):
-        print("One or both teams not found!")
+
+    try:
+        t1 = df[df['Team'].str.lower() == team1.lower()].iloc[0]
+        t2 = df[df['Team'].str.lower() == team2.lower()].iloc[0]
+    except IndexError:
+        print(f"Error: One of the teams not found in the dataset.\n")
         return None
-    team1_stats = df[df['Team'] == team1].iloc[0]
-    team2_stats = df[df['Team'] == team2].iloc[0]
 
-    team1_score = team1_stats['OffenseRating'] - team2_stats['DefenseRating']
-    team2_score = team2_stats['OffenseRating'] - team1_stats['DefenseRating']
+    t1_score = t1['OffenseRating'] - t2['DefenseRating']
+    t2_score = t2['OffenseRating'] - t1['DefenseRating']
 
-    print(f"{team1} adjusted score: {team1_score}")
-    print(f"{team2} adjusted score: {team2_score}")
+    print(f"{team1} Adjusted Score: {t1_score}")
+    print(f"{team2} Adjusted Score: {t2_score}")
 
-    if team1_score > team2_score:
+    if t1_score > t2_score:
         winner = team1
-    else:
+    elif t2_score > t1_score:
         winner = team2
+    else:
+        winner = "Tie"
 
     print(f"Predicted Winner: {winner}\n")
     return winner
 
-# 4️⃣ NFL Player Bet Predictions
+# 4️⃣ NFL Player Bet Predictions (Sample Logic)
 def predict_player_prop(player_stats):
     """
-    Rules-based prop prediction.
-    Example: predict OVER if average performance > line
+    Rules-based player prop prediction.
     """
     print(f"Predicting player prop for {player_stats['Name']}...")
     line = player_stats['BetLine']
@@ -68,17 +74,17 @@ def predict_player_prop(player_stats):
     print(f"Prediction: {prediction}\n")
     return prediction
 
-# 5️⃣ NFL Parlay Prediction
+# 5️⃣ Parlay Prediction
 def predict_parlay(win_preds, player_preds):
     """
-    Simple parlay odds calculation assuming independence.
+    Estimate probability of hitting a parlay based on assumed odds.
     """
     print("Calculating Parlay Probability...")
-    # Assume win prediction ~65% confidence, player prop ~60% if 'OVER'/'UNDER'
+
     win_prob = 0.65
     player_prob = 0.60
 
-    win_count = sum(1 for p in win_preds if p is not None)
+    win_count = sum(1 for p in win_preds if p not in [None, "Tie"])
     player_count = sum(1 for p in player_preds if p in ["OVER", "UNDER"])
 
     combined_prob = (win_prob ** win_count) * (player_prob ** player_count)
@@ -89,21 +95,21 @@ def predict_parlay(win_preds, player_preds):
 
 # 6️⃣ Main Function
 def main():
-    # Load Data
+    # Load the Excel data
     df = load_team_data()
 
-    # Example Team Matchups
-    team_matchups = [("Eagles", "Cowboys"), ("Chiefs", "Bills")]
+    # Game Predictions
+    team_matchups = [("Eagles", "Cowboys"), ("Chiefs", "Bills"), ("49ers", "Ravens")]
     win_preds = []
     for t1, t2 in team_matchups:
         winner = predict_game_winner(df, t1, t2)
         win_preds.append(winner)
 
-    # Example Player Bets
-    # Normally you'd load these from a file or input
+    # Sample Player Bets
     player_data = [
-        {"Name": "Patrick Mahomes", "BetLine": 280.5, "AverageStat": 295.2},
-        {"Name": "Christian McCaffrey", "BetLine": 82.5, "AverageStat": 77.1},
+        {"Name": "Josh Allen", "BetLine": 260.0, "AverageStat": 278.4},
+        {"Name": "Nick Chubb", "BetLine": 85.5, "AverageStat": 91.2},
+        {"Name": "Tyreek Hill", "BetLine": 95.0, "AverageStat": 92.3},
     ]
 
     player_preds = []
@@ -111,7 +117,7 @@ def main():
         result = predict_player_prop(p)
         player_preds.append(result)
 
-    # Parlay Prediction
+    # Combine into a Parlay Estimate
     predict_parlay(win_preds, player_preds)
 
 if __name__ == "__main__":
