@@ -1,20 +1,30 @@
 # Best-Bet-NFL
 
-A Python service that evaluates NFL bets (props, spreads, totals, moneylines, team totals, parlays).
+A Python engine + service to evaluate NFL bets from any sportsbook slip the user pastes in.
 
-**What it returns**
-- **Probability** (model-based, not odds-weighted)
-- **Payout if win** (odds × stake)
-- **Expected value** (secondary)
-- **Percent-focused summary** (rounded to 0.01%)
+**What users see**
+- **Probability (primary):** model-based likelihood (no $ weighting) — shown as a percentage rounded to **0.01%**
+- **Payout if win:** computed only from odds × stake
+- **EV:** secondary metric
+- **Debug analytics:** how the probability was computed
 
 **What it supports**
-- Player props (QB/RB/WR/K common lines)
-- Moneyline, spreads, totals, team totals
-- Parlays
-- Batch processing: multiple singles + multiple parlays in one run
+- **Player props** (QB / RB / WR / **TE** / K):
+  - QB: passing yards, **passing TDs**, attempts, completions
+  - RB: rushing yards, **rushing TDs**, longest rush
+  - WR/TE: receiving yards, **receiving TDs**, receptions, longest reception
+  - K: field goals made
+- **Team markets:** moneyline, spreads, totals, team totals
+- **Parlays:** any mix of legs
+- **Batch:** multiple singles + multiple parlays in one run
+- **Refresh data** in-app (pulls latest weekly stats)
 
-> NOTE: The engine ships with *stubbed math* so you can run and test right away. Swap in your model/ETL later by replacing `src/engine/nfl_bet_engine.py`.
+**Player history window**
+- Uses **last 30 career games** per player:
+  - `< 4 games`: use league averages until they have 4
+  - `4–29 games`: use the games available
+  - `≥ 30 games`: use last 30
+  - Missing stats in any game are **ignored**
 
 ---
 
@@ -26,5 +36,9 @@ cd Best-Bet-NFL
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# Run the demo (evaluates singles + parlays from examples/sample_batch.json)
+# (Optional) Refresh to latest data (you'll connect this to a UI button)
+python -c "from src.service.api import refresh_data; print(refresh_data())"
+
+# Run the demo (evaluates singles + a parlay from examples/sample_batch.json)
 python demo.py
+
