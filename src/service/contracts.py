@@ -14,6 +14,12 @@ class SingleBetReq(TypedDict, total=False):
     opponent: str
     player: str
     opponent_team: str
+    # prop kinds (examples):
+    # qb_pass_yards, qb_pass_tds, qb_pass_attempts, qb_completions, qb_rush_tds
+    # rb_rush_yards, rb_rush_tds, rb_longest_run
+    # wr_rec_yards, wr_receptions, wr_longest_catch, wr_rec_tds
+    # te_rec_yards, te_receptions, te_longest_catch, te_rec_tds
+    # k_fg_made
     prop_kind: str
     side: Side
     line: float
@@ -62,3 +68,4 @@ class BatchReq(TypedDict):
 class BatchResp(TypedDict):
     singles: List[SingleBetResp]
     parlays: List[ParlayResp]
+
