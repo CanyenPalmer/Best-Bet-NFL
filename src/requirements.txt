@@ -1,0 +1,11 @@
+
+---
+
+## 2) `requirements.txt`
+
+```txt
+requests
+numpy
+pandas
+python-dateutil
+nfl-data-py
