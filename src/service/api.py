@@ -158,3 +158,4 @@ def evaluate_batch(req: BatchReq) -> BatchResp:
         "singles": [evaluate_single(s) for s in req.get("singles", [])],
         "parlays": [evaluate_parlay(p) for p in req.get("parlays", [])]
     }
+
