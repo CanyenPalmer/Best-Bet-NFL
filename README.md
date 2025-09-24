@@ -36,9 +36,10 @@ cd Best-Bet-NFL
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# (Optional) Refresh to latest data (you'll connect this to a UI button)
+# (Optional) Refresh to latest data (you’ll wire this to a UI button)
 python -c "from src.service.api import refresh_data; print(refresh_data())"
 
 # Run the demo (evaluates singles + a parlay from examples/sample_batch.json)
 python demo.py
+
 
