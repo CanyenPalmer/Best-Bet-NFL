@@ -68,4 +68,3 @@ class BatchReq(TypedDict):
 class BatchResp(TypedDict):
     singles: List[SingleBetResp]
     parlays: List[ParlayResp]
-
