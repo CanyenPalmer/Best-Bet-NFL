@@ -1,9 +1,14 @@
+
+---
+
+## `src/engine/nfl_bet_engine.py` (replace, full)
+
+```python
 # src/engine/nfl_bet_engine.py
 from __future__ import annotations
-import math, functools, os
+import math, os
 from typing import Dict, Any, Tuple, Optional, List
 import pandas as pd
-import numpy as np
 import nfl_data_py as nfl
 
 # -----------------------------
@@ -123,7 +128,7 @@ def _compute_player_metrics(weekly: pd.DataFrame) -> pd.DataFrame:
     # League baselines (for rookies <4 games)
     league_means, league_sds = {}, {}
     for _, (col, key) in _METRIC_MAP.items():
-        if col not in df.columns: 
+        if col not in df.columns:
             continue
         s = df[col].dropna().astype(float)
         league_means[key] = float(s.mean()) if not s.empty else 0.0
@@ -266,7 +271,7 @@ def compute_prop_probability(player: str, opponent_team: str, kind: str,
     # Normalize TE aliases to WR keys
     if kind.startswith("te_"):
         kind = kind.replace("te_", "wr_")
-    # Normalize QB rush TDs to use rush_tds
+    # Normalize QB rush TDs to RB rush TDs key
     if kind == "qb_rush_tds":
         kind = "rb_rush_tds"
 
@@ -277,7 +282,7 @@ def compute_prop_probability(player: str, opponent_team: str, kind: str,
     p_mu, p_sd, p_team, p_pos, p_games = _player_stat(player, key)
     o_mu, o_sd, o_games = _team_allowed_stat(opponent_team, key)
 
-    prior = 0.5  # neutral prior; UI can blend with odds if desired
+    prior = 0.5  # neutral prior
 
     if p_games == 0 and (p_mu == 0.0 and p_sd == 0.0):
         sd_used = max(10.0, o_sd)
@@ -292,7 +297,7 @@ def compute_prop_probability(player: str, opponent_team: str, kind: str,
     long_floor = key in ("long_rec_proxy", "long_rush_proxy")
     sd_player = max(p_sd, LONG_SIGMA_FLOOR) if long_floor else p_sd
 
-    # Receiving share vs team pass allowed: modest share for WR/TE
+    # Receiving share adjustment vs team pass allowed
     share = 1.0
     if key in ("rec", "rec_yds", "rec_tds", "long_rec_proxy"):
         share = 0.22
@@ -341,4 +346,5 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "expected_points_against": float(exp_against),
         "snapshot": get_snapshot()
     }
+
 
