@@ -23,7 +23,7 @@ def health():
 def refresh():
     return service.refresh_data()
 
-# GET alias for Vercel Cron (cron always performs GET)
+# GET alias for Vercel Cron (cron performs GET)
 @app.get("/cron/refresh")
 def cron_refresh():
     return service.refresh_data()
@@ -43,6 +43,7 @@ def evaluate_parlay(req: Dict[str, Any]):
 @app.post("/evaluate/batch")
 def evaluate_batch(req: Dict[str, Any]):
     return service.evaluate_batch(req)  # type: ignore
+
 
 
 
