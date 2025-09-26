@@ -11,58 +11,11 @@
       "opponent": "BUF"
     },
     {
-      "market": "prop",
-      "player": "Patrick Mahomes",
-      "prop_kind": "qb_pass_tds",
-      "side": "over",
-      "line": 1.5,
-      "stake": 40,
-      "odds": -115,
-      "opponent": "BUF"
-    },
-    {
-      "market": "prop",
-      "player": "Travis Kelce",
-      "prop_kind": "te_rec_tds",
-      "side": "over",
-      "line": 0.5,
-      "stake": 35,
-      "odds": +120,
-      "opponent": "BUF"
-    },
-    {
       "market": "moneyline",
       "team": "KC",
       "opponent": "BUF",
-      "stake": 30,
+      "stake": 40,
       "odds": -120
-    },
-    {
-      "market": "spread",
-      "team": "KC",
-      "opponent": "BUF",
-      "side": "home",
-      "spread_line": -2.5,
-      "stake": 25,
-      "odds": -105
-    },
-    {
-      "market": "total",
-      "team": "KC",
-      "opponent": "BUF",
-      "side": "over",
-      "total_line": 49.5,
-      "stake": 20,
-      "odds": -110
-    },
-    {
-      "market": "team_total",
-      "team": "KC",
-      "opponent": "BUF",
-      "side": "over",
-      "team_total_line": 26.5,
-      "stake": 20,
-      "odds": -110
     }
   ],
   "parlays": [
@@ -71,29 +24,11 @@
       "legs": [
         {
           "market": "prop",
-          "player": "Patrick Mahomes",
-          "prop_kind": "qb_pass_yards",
-          "side": "over",
-          "line": 275.5,
-          "odds": -110,
-          "opponent": "BUF"
-        },
-        {
-          "market": "prop",
           "player": "Travis Kelce",
-          "prop_kind": "te_receptions",
+          "prop_kind": "wr_rec_yards",
           "side": "over",
-          "line": 6.5,
-          "odds": -115,
-          "opponent": "BUF"
-        },
-        {
-          "market": "prop",
-          "player": "Isiah Pacheco",
-          "prop_kind": "rb_rush_tds",
-          "side": "over",
-          "line": 0.5,
-          "odds": +110,
+          "line": 74.5,
+          "odds": -105,
           "opponent": "BUF"
         },
         {
@@ -107,4 +42,6 @@
       ]
     }
   ]
+}
+
 }
