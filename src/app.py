@@ -2,12 +2,13 @@
 from __future__ import annotations
 import os
 from typing import Dict, Any
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import RedirectResponse, PlainTextResponse, JSONResponse
 from src.service import api as service
+from src.engine import nfl_bet_engine as engine
 
-app = FastAPI(title="Best Bet NFL API", version="0.1.2")
+app = FastAPI(title="Best Bet NFL API", version="0.1.3")
 
 # CORS (explicit, preflight-friendly)
 app.add_middleware(
@@ -46,7 +47,6 @@ def refresh():
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"refresh-data failed: {e}")
 
-# Vercel Cron (GET)
 @app.get("/cron/refresh")
 def cron_refresh():
     try:
@@ -85,7 +85,6 @@ def evaluate_single(req: Dict[str, Any]):
     try:
         return service.evaluate_single(req)  # type: ignore
     except ValueError as ve:
-        # Bad inputs -> 400 so the browser still receives JSON, not a network error
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"evaluate_single failed: {e}")
@@ -109,7 +108,7 @@ def evaluate_batch(req: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"evaluate_batch failed: {e}")
 
 # -----------------------
-# Debug helpers (GET)
+# Debug helpers (GET) — zero preflight friction
 # -----------------------
 @app.get("/debug/ping")
 def debug_ping():
@@ -117,7 +116,6 @@ def debug_ping():
 
 @app.get("/debug/eval-sample")
 def debug_eval_sample():
-    # A tiny sample that you can open directly in the browser (no CORS preflight)
     sample = {
         "market": "prop",
         "stake": 100.0,
@@ -132,6 +130,84 @@ def debug_eval_sample():
         return service.evaluate_single(sample)  # type: ignore
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+@app.get("/debug/players")
+def debug_players(prefix: str = Query("", description="Prefix match (case-insensitive)"), limit: int = 25):
+    return {"players": engine.list_players(prefix=prefix, limit=limit)}
+
+@app.get("/debug/teams")
+def debug_teams():
+    return {"teams": engine.list_teams()}
+
+@app.get("/debug/metrics")
+def debug_metrics():
+    return {"metric_keys": engine.list_metric_keys(), "kind_keys": sorted(list(engine._METRIC_MAP.keys()))}
+
+@app.get("/debug/player-metric")
+def debug_player_metric(player: str, metric: str):
+    """
+    metric can be a 'prop_kind' (e.g., qb_pass_yards) or an internal key (e.g., pass_yds)
+    """
+    try:
+        return engine.get_player_metric(player, metric)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/debug/team-allowed")
+def debug_team_allowed(team: str, metric: str):
+    """
+    metric can be derived from prop kind or be an internal key, e.g.:
+      pass_yds, pass_tds, rush_yds, rec, rec_yds, rec_tds, points_for, points
+    """
+    try:
+        return engine.get_team_allowed(team, metric)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.get("/debug/sanity/prop")
+def sanity_prop(
+    player: str,
+    opponent_team: str,
+    prop_kind: str,
+    line_from: float,
+    line_to: float,
+    step: float = 5.0
+):
+    """
+    Returns probabilities across a range of lines so you can check monotonic behavior.
+    """
+    try:
+        lo, hi = float(line_from), float(line_to)
+        st = max(0.01, float(step))
+        if hi < lo:
+            lo, hi = hi, lo
+        lines = []
+        x = lo
+        while x <= hi + 1e-9:
+            lines.append(round(x, 4))
+            x += st
+
+        rows = []
+        for L in lines:
+            req = {
+                "market": "prop",
+                "stake": 0.0,
+                "odds": -110,
+                "player": player,
+                "opponent_team": opponent_team,
+                "prop_kind": prop_kind,
+                "side": "over",
+                "line": L
+            }
+            r = service.evaluate_single(req)  # type: ignore
+            p_over = float(r["probability"])
+            rows.append({"line": L, "p_over": p_over, "p_under": round(1.0 - p_over, 6)})
+        return {"player": player, "opponent_team": opponent_team, "prop_kind": prop_kind, "curve": rows}
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"sanity_prop failed: {e}")
+
 
 
 
