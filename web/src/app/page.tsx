@@ -1,15 +1,27 @@
 "use client";
 
-import { useState } from "react";
-import { api, SingleReq, ParlayReq } from "@/lib/api";
-import { RefreshCw, Percent, Plus, Minus } from "lucide-react";
+import { useMemo, useState } from "react";
+import { api, SingleReq, ParlayReq, ParlayResp, SingleResp } from "@/lib/api";
+import { RefreshCw, Percent, Plus, Minus, Info, TrendingUp } from "lucide-react";
+
+/** Utility: American odds -> implied probability (0..1) */
+function impliedFromAmerican(odds: number): number {
+  const ao = Number(odds);
+  if (Number.isNaN(ao)) return 0.5;
+  return ao >= 0 ? 100 / (ao + 100) : Math.abs(ao) / (Math.abs(ao) + 100);
+}
+function pct(n: number) {
+  const p = Math.max(0, Math.min(1, n));
+  return `${(p * 100).toFixed(2)}%`;
+}
 
 type Tab = "single" | "parlay" | "batch";
+type AnyResult = SingleResp | ParlayResp | { singles: SingleResp[]; parlays: ParlayResp[] } | null;
 
 export default function Page() {
   const [tab, setTab] = useState<Tab>("single");
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<AnyResult>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [single, setSingle] = useState<SingleReq>({
@@ -58,8 +70,9 @@ export default function Page() {
             <p className="mt-2 text-white/80 max-w-2xl">
               Paste your book’s lines. Get <span className="font-semibold text-white">actual hit probabilities</span> for props, moneylines, spreads, and parlays—so you can bet with confidence.
             </p>
-            <div className="mt-4 text-sm text-white/70">
-              Data updates daily. Use <code className="bg-white/10 px-2 py-1 rounded">Refresh Data</code> for an on-demand refresh.
+            <div className="mt-4 text-sm text-white/70 flex items-center gap-2">
+              <Info className="w-4 h-4" />
+              Data updates daily. Use <code className="bg-white/10 px-2 py-1 rounded">Refresh Data</code> for on-demand refresh.
             </div>
           </div>
         </div>
@@ -80,13 +93,17 @@ export default function Page() {
           </div>
         </div>
 
-        {/* Forms */}
+        {/* Forms + Results */}
         <div className="md:col-span-2 grid gap-6">
           {tab === "single" && <SingleForm value={single} onChange={setSingle} onSubmit={() => run(() => api.single(single))} loading={loading} />}
           {tab === "parlay" && <ParlayForm value={parlay} onChange={setParlay} onSubmit={() => run(() => api.parlay(parlay))} loading={loading} />}
           {tab === "batch" && <BatchBox text={batchText} setText={setBatchText} onSubmit={() => run(() => api.batch(JSON.parse(batchText)))} loading={loading} />}
           <ResultPanel loading={loading} error={error} result={result} />
         </div>
+      </div>
+
+      <div className="footer">
+        © {new Date().getFullYear()} Best Bet NFL — Educational use only. Not financial advice.
       </div>
     </main>
   );
@@ -98,6 +115,15 @@ function SingleForm({ value, onChange, onSubmit, loading }: {
   const isProp = value.market === "prop";
   const isML = value.market === "moneyline";
   const isSpread = value.market === "spread";
+
+  // common prop kinds we support in backend
+  const propKinds = [
+    "qb_pass_yards","qb_pass_tds","qb_completions","qb_pass_attempts",
+    "rb_rush_yards","rb_rush_tds","rb_longest_run",
+    "wr_rec_yards","wr_receptions","wr_longest_catch","wr_rec_tds",
+    "te_rec_yards","te_receptions","te_longest_catch","te_rec_tds",
+    "k_fg_made"
+  ];
 
   return (
     <div className="card">
@@ -127,7 +153,13 @@ function SingleForm({ value, onChange, onSubmit, loading }: {
             <Field label="Opponent Team (e.g., BUF)" value={value.opponent_team || ""} onChange={v => onChange({ ...value, opponent_team: v })} />
           </div>
           <div className="grid-cols-form mt-4">
-            <Field label="Prop Kind" value={value.prop_kind || ""} onChange={v => onChange({ ...value, prop_kind: v })} placeholder="qb_pass_yards, wr_rec_yards, rb_rush_tds..." />
+            <Field
+              label="Prop Kind"
+              as="select"
+              value={value.prop_kind || ""}
+              onChange={v => onChange({ ...value, prop_kind: v })}
+              options={propKinds}
+            />
             <Field label="Side" value={value.side || "over"} onChange={v => onChange({ ...value, side: v as any })} as="select" options={["over", "under"]} />
           </div>
           <div className="grid-cols-form mt-4">
@@ -180,6 +212,14 @@ function ParlayForm({ value, onChange, onSubmit, loading }: {
     onChange({ ...value, legs });
   }
 
+  const propKinds = [
+    "qb_pass_yards","qb_pass_tds","qb_completions","qb_pass_attempts",
+    "rb_rush_yards","rb_rush_tds","rb_longest_run",
+    "wr_rec_yards","wr_receptions","wr_longest_catch","wr_rec_tds",
+    "te_rec_yards","te_receptions","te_longest_catch","te_rec_tds",
+    "k_fg_made"
+  ];
+
   return (
     <div className="card">
       <div className="flex items-center justify-between mb-4">
@@ -210,7 +250,7 @@ function ParlayForm({ value, onChange, onSubmit, loading }: {
                   <Field label="Opponent Team" value={leg.opponent_team || ""} onChange={v => updateLeg(i, { opponent_team: v })} />
                 </div>
                 <div className="grid-cols-form mt-3">
-                  <Field label="Prop Kind" value={leg.prop_kind || ""} onChange={v => updateLeg(i, { prop_kind: v })} placeholder="qb_pass_yards..." />
+                  <Field label="Prop Kind" as="select" value={leg.prop_kind || ""} onChange={v => updateLeg(i, { prop_kind: v })} options={propKinds} />
                   <Field label="Side" as="select" value={leg.side || "over"} onChange={v => updateLeg(i, { side: v as any })} options={["over", "under"]} />
                 </div>
                 <div className="grid-cols-form mt-3">
@@ -262,21 +302,148 @@ function BatchBox({ text, setText, onSubmit, loading }: {
   );
 }
 
-function ResultPanel({ loading, error, result }: { loading: boolean; error: string | null; result: any }) {
+function ResultPanel({ loading, error, result }: { loading: boolean; error: string | null; result: AnyResult }) {
+  if (loading) {
+    return <div className="card text-white/70">Running...</div>;
+  }
+  if (error) {
+    return <div className="card text-red-300">{error}</div>;
+  }
+  if (!result) {
+    return <div className="card text-white/60">Submit a bet or parlay to see results.</div>;
+  }
+
+  // Single
+  if ("probability" in result && "probability_pct" in result) {
+    return <SingleResult result={result} />;
+  }
+  // Parlay
+  if ("parlay_probability_independent_pct" in result) {
+    return <ParlayResult result={result as ParlayResp} />;
+  }
+  // Batch
+  if ("singles" in result && "parlays" in result) {
+    return <BatchResult result={result as { singles: SingleResp[]; parlays: ParlayResp[] }} />;
+  }
+  // Fallback
   return (
     <div className="card">
-      <div className="flex items-center gap-2 mb-3">
-        <Percent className="w-4 h-4" />
-        <div className="text-lg font-semibold">Results</div>
+      <pre className="text-sm whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
+    </div>
+  );
+}
+
+function SingleResult({ result }: { result: SingleResp }) {
+  const implied = impliedFromAmerican((result as any).odds ?? -110);
+  const actual = result.probability;
+  const edge = actual - implied;
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-lg font-semibold">{result.label}</div>
+        <div className="pill">
+          <TrendingUp className="w-4 h-4" />
+          {result.summary}
+        </div>
       </div>
-      {loading && <div className="text-white/60">Running...</div>}
-      {error && <div className="text-red-300">{error}</div>}
-      {!loading && !error && result && (
-        <pre className="text-sm whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
-      )}
-      {!loading && !error && !result && (
-        <div className="text-white/60">Submit a bet or parlay to see results.</div>
-      )}
+
+      <div className="grid md:grid-cols-4 gap-4 mt-4">
+        <div className="stat">
+          <div className="label">Actual Probability</div>
+          <div className="value">{pct(actual)}</div>
+          <div className="progress mt-2"><span style={{ width: pct(actual) }} /></div>
+        </div>
+        <div className="stat">
+          <div className="label">Implied by Odds</div>
+          <div className="value">{pct(implied)}</div>
+          <div className="progress mt-2"><span style={{ width: pct(implied) }} /></div>
+        </div>
+        <div className="stat">
+          <div className="label">Edge vs Implied</div>
+          <div className="value" style={{ color: edge >= 0 ? "#c7f7c7" : "#ffb4b4" }}>
+            {edge >= 0 ? "+" : ""}{(edge * 100).toFixed(2)}%
+          </div>
+        </div>
+        <div className="stat">
+          <div className="label">EV at Stake</div>
+          <div className="value">${result.expected_value.toFixed(2)}</div>
+          <div className="text-xs text-white/60 mt-1">Payout if Win: ${result.payout_if_win.toFixed(2)}</div>
+        </div>
+      </div>
+
+      <details className="mt-4">
+        <summary className="cursor-pointer text-white/70">Details</summary>
+        <pre className="mt-2 text-sm whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+
+function ParlayResult({ result }: { result: ParlayResp }) {
+  return (
+    <div className="card">
+      <div className="text-lg font-semibold mb-2">Parlay</div>
+
+      <div className="grid md:grid-cols-4 gap-4">
+        <div className="stat">
+          <div className="label">Parlay Probability</div>
+          <div className="value">{result.parlay_probability_independent_pct}</div>
+        </div>
+        <div className="stat">
+          <div className="label">Payout if Win</div>
+          <div className="value">${result.payout_if_win.toFixed(2)}</div>
+          <div className="text-xs text-white/60 mt-1">Stake: ${result.stake.toFixed(2)}</div>
+        </div>
+        <div className="stat">
+          <div className="label">Expected Value</div>
+          <div className="value">${result.expected_value.toFixed(2)}</div>
+        </div>
+        <div className="stat">
+          <div className="label">Combined Decimal</div>
+          <div className="value">{result.combined_decimal_odds.toFixed(3)}</div>
+        </div>
+      </div>
+
+      <div className="mt-4 rounded-xl border border-white/10">
+        {result.legs.map((leg, i) => (
+          <div key={i} className="p-4 border-b last:border-b-0 border-white/10">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="font-medium">{leg.label}</div>
+              <div className="pill">
+                <Percent className="w-4 h-4" />
+                {leg.probability_pct} &nbsp; @ {leg.odds}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <details className="mt-4">
+        <summary className="cursor-pointer text-white/70">Details</summary>
+        <pre className="mt-2 text-sm whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
+      </details>
+    </div>
+  );
+}
+
+function BatchResult({ result }: { result: { singles: SingleResp[]; parlays: ParlayResp[] } }) {
+  return (
+    <div className="card">
+      <div className="text-lg font-semibold mb-2">Batch Results</div>
+      <div className="text-white/70 text-sm mb-4">
+        {result.singles.length} singles • {result.parlays.length} parlays
+      </div>
+
+      <div className="grid gap-4">
+        {result.singles.map((s, i) => <SingleResult key={`s-${i}`} result={s} />)}
+        {result.parlays.map((p, i) => <ParlayResult key={`p-${i}`} result={p} />)}
+      </div>
+
+      <details className="mt-4">
+        <summary className="cursor-pointer text-white/70">Raw JSON</summary>
+        <pre className="mt-2 text-sm whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
+      </details>
     </div>
   );
 }
@@ -291,6 +458,7 @@ function Field(props: {
       <label className="block">
         <div className="label">{label}</div>
         <select className="input" value={value} onChange={e => onChange(e.target.value)}>
+          <option value="" disabled>Select…</option>
           {options?.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
       </label>
@@ -303,6 +471,7 @@ function Field(props: {
     </label>
   );
 }
+
 
 
 
