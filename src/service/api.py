@@ -7,20 +7,14 @@ from .contracts import (
 )
 from ..engine import nfl_bet_engine as engine
 
-# --- helpers ---
-
 def _pct(p: float) -> str:
     return f"{round(100.0 * max(0.0, min(1.0, float(p))), 2):.2f}%"
 
 def _decimal_from_american(american_odds: int) -> float:
     ao = int(american_odds)
-    if ao >= 0:
-        return 1.0 + ao / 100.0
-    else:
-        return 1.0 + 100.0 / abs(ao)
+    return 1.0 + (ao / 100.0 if ao >= 0 else 100.0 / abs(ao))
 
 def _payout_from_american(stake: float, american_odds: int) -> float:
-    # net profit (excludes returned stake)
     dec = _decimal_from_american(american_odds)
     return stake * (dec - 1.0)
 
@@ -28,15 +22,11 @@ def _ev(stake: float, p: float, american_odds: int) -> float:
     dec = _decimal_from_american(american_odds)
     return p * stake * (dec - 1.0) - (1.0 - p) * stake
 
-# --- public wrappers for engine ---
-
 def refresh_data() -> Dict[str, Any]:
     return engine.refresh_data()
 
 def get_snapshot() -> Dict[str, Any]:
     return engine.get_snapshot()
-
-# --- core evaluators ---
 
 def evaluate_single(req: SingleBetReq) -> SingleBetResp:
     market = req.get("market", "prop")
@@ -54,14 +44,7 @@ def evaluate_single(req: SingleBetReq) -> SingleBetResp:
         prop_kind = str(req.get("prop_kind", "")).lower()
         side = str(req.get("side", "over")).lower()
         line = float(req.get("line", 0.0))
-
-        res = engine.compute_prop_probability(
-            player=player,
-            opponent_team=opponent_team,
-            kind=prop_kind,
-            side=side,
-            line=line
-        )
+        res = engine.compute_prop_probability(player, opponent_team, prop_kind, side, line)
         probability = float(res["p_hit"])
         snapshot = res.get("snapshot", {})
         debug = res.get("debug", {})
@@ -101,7 +84,7 @@ def evaluate_single(req: SingleBetReq) -> SingleBetResp:
 
     payout = _payout_from_american(stake, american_odds)
     ev = _ev(stake, probability, american_odds)
-    resp: SingleBetResp = {
+    return {
         "label": label,
         "market": market,  # type: ignore
         "probability": round(probability, 6),
@@ -114,7 +97,6 @@ def evaluate_single(req: SingleBetReq) -> SingleBetResp:
         "summary": f"{label} has {round(probability*100, 2):.2f}% hit chance; EV ${round(ev,2):.2f} at odds {american_odds}",
         "odds": american_odds
     }
-    return resp
 
 def _evaluate_parlay_leg(leg: ParlayLeg) -> ParlayLegResp:
     sreq: SingleBetReq = dict(leg)  # type: ignore
@@ -154,4 +136,5 @@ def evaluate_batch(req: BatchReq) -> BatchResp:
     singles = [evaluate_single(s) for s in req.get("singles", [])]
     parlays = [evaluate_parlay(p) for p in req.get("parlays", [])]
     return {"singles": singles, "parlays": parlays}
+
 
