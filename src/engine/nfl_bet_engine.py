@@ -188,7 +188,7 @@ def get_snapshot() -> Dict[str, Any]:
     return dict(_SNAPSHOT)
 
 # -----------------------------
-# Lookups (on-demand)
+# Lookups (on-demand) — SAFE STRING HANDLING
 # -----------------------------
 def _last_n_non_null(values: pd.Series, n: int) -> pd.Series:
     vv = pd.to_numeric(values, errors="coerce").dropna().astype(float)
@@ -196,6 +196,10 @@ def _last_n_non_null(values: pd.Series, n: int) -> pd.Series:
     return vv.iloc[-n:]
 
 def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[str], Optional[str], int]:
+    """
+    Return (mu, sd, last_team, pos, n_games) for the given player & metric key.
+    Uses .astype(str) before .str.lower() to avoid NaN in boolean masks.
+    """
     _ensure_minimal()
     assert _WEEKLY is not None
     col = None
@@ -210,9 +214,14 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
     if df.empty:
         return _LEAGUE_MEAN.get(metric_key, 0.0), _LEAGUE_SD.get(metric_key, 0.0), None, None, 0
 
-    sub = df[df["player_name"].str.lower() == (player or "").lower()]
+    names_lower = df["player_name"].astype(str).str.lower()
+    target = (player or "").lower()
+
+    mask = names_lower == target
+    sub = df[mask]
     if sub.empty:
-        sub = df[df["player_name"].str.lower().str.startswith((player or "").lower())]
+        starts = names_lower.str.startswith(target)
+        sub = df[starts]
         if sub.empty:
             return _LEAGUE_MEAN.get(metric_key, 0.0), _LEAGUE_SD.get(metric_key, 0.0), None, None, 0
 
@@ -347,6 +356,7 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "expected_points_against": float(exp_against),
         "snapshot": get_snapshot()
     }
+
 
 
 
