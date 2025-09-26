@@ -195,6 +195,19 @@ def _last_n_non_null(values: pd.Series, n: int) -> pd.Series:
     if vv.empty: return vv
     return vv.iloc[-n:]
 
+def _resolve_metric_key(kind_or_key: str) -> str:
+    """Accepts either prop kind (e.g., 'qb_pass_yards') or internal key (e.g., 'pass_yds')."""
+    if not kind_or_key:
+        raise ValueError("metric/kind is required")
+    k = kind_or_key.strip().lower()
+    if k in _METRIC_MAP:
+        return _METRIC_MAP[k][1]
+    # maybe already a key
+    keys = {v[1] for v in _METRIC_MAP.values()}
+    if k in keys or k in ("points_for", "points"):
+        return k
+    raise ValueError(f"Unknown metric/kind: {kind_or_key}")
+
 def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[str], Optional[str], int]:
     """
     Return (mu, sd, last_team, pos, n_games) for the given player & metric key.
@@ -202,6 +215,7 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
     """
     _ensure_minimal()
     assert _WEEKLY is not None
+    # find the matching weekly column for this key
     col = None
     for c, k in _METRIC_MAP.values():
         if k == metric_key:
@@ -356,6 +370,43 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "expected_points_against": float(exp_against),
         "snapshot": get_snapshot()
     }
+
+# -----------------------------
+# PUBLIC DEBUG HELPERS (for /debug endpoints)
+# -----------------------------
+def list_players(prefix: str = "", limit: int = 25) -> List[str]:
+    _ensure_minimal()
+    assert _WEEKLY is not None
+    names = _WEEKLY.get("player_name", pd.Series([], dtype=object)).dropna().astype(str).unique().tolist()
+    if prefix:
+        pfx = prefix.lower()
+        names = [n for n in names if n.lower().startswith(pfx)]
+    names.sort()
+    return names[:max(1, int(limit))]
+
+def list_teams() -> List[str]:
+    _ensure_minimal()
+    assert _WEEKLY is not None
+    rec = _WEEKLY.get("recent_team", pd.Series([], dtype=object)).dropna().astype(str).unique().tolist()
+    opp = _WEEKLY.get("opponent_team", pd.Series([], dtype=object)).dropna().astype(str).unique().tolist()
+    teams = sorted({*(t.upper() for t in rec), *(t.upper() for t in opp)})
+    return teams
+
+def list_metric_keys() -> List[str]:
+    keys = {v[1] for v in _METRIC_MAP.values()}
+    keys.update(["points_for", "points"])
+    return sorted(keys)
+
+def get_player_metric(player: str, metric_or_kind: str) -> Dict[str, Any]:
+    key = _resolve_metric_key(metric_or_kind)
+    mu, sd, team, pos, n = _player_stat(player, key)
+    return {"player": player, "metric_key": key, "mu": mu, "sd": sd, "team": team, "pos": pos, "n_games": n}
+
+def get_team_allowed(team: str, metric_or_kind: str) -> Dict[str, Any]:
+    key = _resolve_metric_key(metric_or_kind)
+    mu, sd, n = _team_allowed_stat(team, key)
+    return {"team": team.upper(), "metric_key": key, "mu": mu, "sd": sd, "n_games": n}
+
 
 
 
