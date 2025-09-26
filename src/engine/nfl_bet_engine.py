@@ -378,8 +378,6 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
     }
 
 
-# lets do it
-
 
 
 
