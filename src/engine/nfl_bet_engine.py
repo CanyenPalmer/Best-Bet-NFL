@@ -18,8 +18,7 @@ TOTAL_SD = 18.0
 TEAM_SD = 7.0
 
 CURR_SEASON = int(os.getenv("SEASON", "2025"))
-# Keep this SMALL for serverless cold-start speed; you can raise later.
-SEASONS_BACK = int(os.getenv("SEASONS_BACK", "1"))
+SEASONS_BACK = int(os.getenv("SEASONS_BACK", "1"))  # keep small for serverless speed
 SEASONS = list(range(max(2009, CURR_SEASON - SEASONS_BACK + 1), CURR_SEASON + 1))
 
 # nflverse CSV weekly player stats (one file per season)
@@ -99,7 +98,7 @@ def _poisson_sf(k_minus_1: float, lam: float) -> float:
 def _logit_blend(p_model: float, p_prior: float, w_model: float = 0.6) -> float:
     def logit(p): return math.log(max(1e-6, p) / max(1e-6, 1 - p))
     def inv(z):  return 1.0 / (1.0 + math.exp(-z))
-    return inv(w_model * logit(p_model) + (1 - w_model) * logit(prior))
+    return inv(w_model * logit(p_model) + (1 - w_model) * logit(p_prior))
 
 # -----------------------------
 # Lightweight CSV loader (+ /tmp cache)
@@ -116,7 +115,7 @@ def _fetch_weekly_csv(year: int) -> pd.DataFrame:
         return pd.read_csv(cache, low_memory=False)
 
     url = CSV_URL.format(year=year)
-    resp = requests.get(url, timeout=20)
+    resp = requests.get(url, timeout=7)  # short timeout so we never hit Vercel's limit
     resp.raise_for_status()
     cache.write_bytes(resp.content)  # persist for this instance
     return pd.read_csv(io.BytesIO(resp.content), low_memory=False)
@@ -149,31 +148,28 @@ def _load_weekly(seasons: List[int]) -> pd.DataFrame:
             df[c] = 0
     return df
 
-def _ensure_loaded():
-    """Load weekly data & league baselines once. Cheap & cold-start friendly."""
-    global _WEEKLY, _LEAGUE_MEAN, _LEAGUE_SD, _SNAPSHOT
-    if _WEEKLY is not None:
-        return
-    seasons = SEASONS
-    weekly = _load_weekly(seasons)
+def _init_empty_baselines():
+    global _LEAGUE_MEAN, _LEAGUE_SD
+    _LEAGUE_MEAN = {k: 0.0 for _, k in _METRIC_MAP.values()}
+    _LEAGUE_SD = {k: 0.0 for _, k in _METRIC_MAP.values()}
 
-    # Precompute league baselines (mean/sd) per key ONCE; used for rookies.
-    _LEAGUE_MEAN, _LEAGUE_SD = {}, {}
-    for _, (col, key) in _METRIC_MAP.items():
-        if col in weekly.columns:
-            s = pd.to_numeric(weekly[col], errors="coerce").dropna()
-            _LEAGUE_MEAN[key] = float(s.mean()) if not s.empty else 0.0
-            _LEAGUE_SD[key] = float(s.std(ddof=0)) if not s.empty else 0.0
-        else:
-            _LEAGUE_MEAN[key] = 0.0
-            _LEAGUE_SD[key] = 0.0
-
-    _WEEKLY = weekly
-    _SNAPSHOT = {
-        "snapshot_ts": pd.Timestamp.utcnow().isoformat(timespec="seconds"),
-        "seasons": seasons,
-        "rows": int(len(weekly))
-    }
+def _ensure_minimal():
+    """Ensure structures exist WITHOUT doing any network I/O."""
+    global _WEEKLY, _SNAPSHOT
+    if _WEEKLY is None:
+        _WEEKLY = pd.DataFrame(columns=[
+            "season","week","player_name","recent_team","opponent_team","position",
+            "completions","attempts","passing_yards","passing_tds",
+            "rushing_yards","rushing_tds",
+            "receiving_yards","receptions","receiving_tds",
+            "field_goals_made"
+        ])
+        _init_empty_baselines()
+        _SNAPSHOT = {
+            "snapshot_ts": pd.Timestamp.utcnow().isoformat(timespec="seconds"),
+            "seasons": SEASONS,
+            "rows": 0
+        }
 
 # -----------------------------
 # Public refresh/load
@@ -181,12 +177,13 @@ def _ensure_loaded():
 def refresh_data(seasons: Optional[List[int]] = None) -> Dict[str, Any]:
     """
     Reload weekly NFL data (default: last SEASONS_BACK) and refresh league baselines.
-    No heavy per-player team caches are built here; we compute on-demand.
+    No heavy per-player/team caches are built here; we compute on-demand.
     """
     global _WEEKLY, _LEAGUE_MEAN, _LEAGUE_SD, _SNAPSHOT
     use_seasons = seasons or SEASONS
     weekly = _load_weekly(use_seasons)
 
+    # league baselines (for rookies)
     _LEAGUE_MEAN, _LEAGUE_SD = {}, {}
     for _, (col, key) in _METRIC_MAP.items():
         if col in weekly.columns:
@@ -206,7 +203,7 @@ def refresh_data(seasons: Optional[List[int]] = None) -> Dict[str, Any]:
     return {"status": "ok", **_SNAPSHOT}
 
 def get_snapshot() -> Dict[str, Any]:
-    _ensure_loaded()
+    _ensure_minimal()
     return dict(_SNAPSHOT)
 
 # -----------------------------
@@ -219,7 +216,7 @@ def _last_n_non_null(values: pd.Series, n: int) -> pd.Series:
 
 def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[str], Optional[str], int]:
     """Return (mu, sd, last_team, pos, n_games) for the given player & metric key."""
-    _ensure_loaded()
+    _ensure_minimal()
     assert _WEEKLY is not None
     col = None
     for c, k in _METRIC_MAP.values():
@@ -230,6 +227,10 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
         return 0.0, 0.0, None, None, 0
 
     df = _WEEKLY
+    if df.empty:
+        # No data loaded yet in this instance → rookie baseline
+        return _LEAGUE_MEAN.get(metric_key, 0.0), _LEAGUE_SD.get(metric_key, 0.0), None, None, 0
+
     mask = df["player_name"].str.lower() == (player or "").lower()
     sub = df[mask]
     if sub.empty:
@@ -237,10 +238,8 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
         mask = df["player_name"].str.lower().str.startswith((player or "").lower())
         sub = df[mask]
         if sub.empty:
-            # unknown player -> rookie baseline
             return _LEAGUE_MEAN.get(metric_key, 0.0), _LEAGUE_SD.get(metric_key, 0.0), None, None, 0
 
-    # last known team/pos
     team = sub["recent_team"].dropna().iloc[-1] if not sub["recent_team"].dropna().empty else None
     pos = sub["position"].dropna().iloc[-1] if not sub["position"].dropna().empty else None
 
@@ -255,12 +254,12 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
 
 def _team_allowed_stat(team: str, metric_key: str) -> Tuple[float, float, int]:
     """Return (mu, sd, n_games) of what the team allows for a given metric."""
-    _ensure_loaded()
+    _ensure_minimal()
     assert _WEEKLY is not None
     df = _WEEKLY
 
     if metric_key in ("points_for", "points"):
-        # compute via TD proxy
+        # TD proxy
         pass_td = pd.to_numeric(df.get("passing_tds", 0), errors="coerce").fillna(0.0)
         rush_td = pd.to_numeric(df.get("rushing_tds", 0), errors="coerce").fillna(0.0)
         points_for_proxy = 6.0 * (pass_td + rush_td)
@@ -278,9 +277,11 @@ def _team_allowed_stat(team: str, metric_key: str) -> Tuple[float, float, int]:
         sd = float(tail.std(ddof=0)) if n > 1 else 7.0
         return mu, sd, n
 
-    # other metrics -> map to weekly column then filter opponent_team == team
     weekly_col = _TEAM_ALLOWED_KEYS.get(metric_key)
-    if weekly_col is None or weekly_col not in df.columns:
+    if weekly_col is None:
+        return 0.0, 0.0, 0
+
+    if df.empty or weekly_col not in df.columns:
         return 0.0, 0.0, 0
 
     g = df[df["opponent_team"].astype(str).str.upper() == (team or "").upper()]
@@ -313,7 +314,6 @@ def compute_prop_probability(player: str, opponent_team: str, kind: str,
 
     prior = 0.5  # neutral prior
 
-    # If truly unknown player numbers, lean on opponent distribution
     if p_games == 0 and (p_mu == 0.0 and p_sd == 0.0):
         sd_used = max(10.0, o_sd)
         p_over = 1.0 - _norm_cdf(line, o_mu, sd_used)
@@ -347,10 +347,7 @@ def compute_prop_probability(player: str, opponent_team: str, kind: str,
         p_over = 1.0 - _norm_cdf(line, mu_blend, sd_used)
         p_raw = p_over if side == "over" else 1.0 - p_over
 
-    def logit(p): return math.log(max(1e-6, p) / max(1e-6, 1 - p))
-    def inv(z):  return 1.0 / (1.0 + math.exp(-z))
-    p = inv(0.6 * logit(p_raw) + 0.4 * logit(prior))
-
+    p = _logit_blend(p_raw, prior, 0.6)
     return {
         "p_hit": max(0.0, min(1.0, float(p))),
         "snapshot": get_snapshot(),
@@ -379,7 +376,6 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "expected_points_against": float(exp_against),
         "snapshot": get_snapshot()
     }
-
 
 
 
