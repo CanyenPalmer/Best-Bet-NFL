@@ -1,7 +1,7 @@
 # src/app.py
 from __future__ import annotations
 import os
-from typing import Dict, Any
+from typing import Dict, Any, List
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
@@ -9,28 +9,34 @@ from src.service import api as service
 
 app = FastAPI(title="Best Bet NFL API", version="0.1.0")
 
-# --- Frontend URL / CORS setup ---
-# Set this in your API project env: WEB_URL = https://best-bet-nfl-web.vercel.app
-WEB_URL = os.getenv("WEB_URL", "https://best-bet-nfl-web.vercel.app").strip()
-ALLOWED_ORIGINS = [WEB_URL] if WEB_URL else []
+# --- Web origins / CORS ---
+# Provide one or more frontend URLs via WEB_URLS (comma-separated).
+# Example:
+#   WEB_URLS=https://best-bet-nfl-web.vercel.app,https://best-bet-nfl-xxxxx.vercel.app
+_web_urls = os.getenv("WEB_URLS", "").strip()
+WEB_URLS: List[str] = [u.strip() for u in _web_urls.split(",") if u.strip()]
 
-# During dev you could allow "*", but in prod lock to your web origin.
+# Fallback: allow vercel.app previews if nothing specified (dev convenience).
+ALLOW_REGEX = None if WEB_URLS else r"^https://.*vercel\.app$"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS or ["https://best-bet-nfl-web.vercel.app"],
+    allow_origins=WEB_URLS,
+    allow_origin_regex=ALLOW_REGEX,  # enables previews if WEB_URLS is empty
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Root redirect to frontend (so visitors don't see a JSON 404) ---
+# --- Root redirect to your frontend (if WEB_URLS provided) ---
 @app.get("/", include_in_schema=False)
 def root():
-    if WEB_URL:
-        return RedirectResponse(WEB_URL, status_code=307)
+    if WEB_URLS:
+        # Redirect to the first listed frontend URL
+        return RedirectResponse(WEB_URLS[0], status_code=307)
     return {
         "ok": True,
         "app": "Best Bet NFL API",
-        "hint": "Set WEB_URL env var to redirect this root to your frontend.",
+        "hint": "Set WEB_URLS env var (comma-separated) to redirect this root to your frontend(s).",
         "endpoints": ["/health", "/snapshot", "/refresh-data", "/evaluate/*"]
     }
 
@@ -43,7 +49,7 @@ def health():
 def refresh():
     return service.refresh_data()
 
-# GET alias for Vercel Cron (cron performs GET). See vercel.json.
+# GET alias for Vercel Cron (cron performs GET). See vercel.json if configured.
 @app.get("/cron/refresh")
 def cron_refresh():
     return service.refresh_data()
@@ -64,6 +70,7 @@ def evaluate_parlay(req: Dict[str, Any]):
 @app.post("/evaluate/batch")
 def evaluate_batch(req: Dict[str, Any]):
     return service.evaluate_batch(req)  # type: ignore
+
 
 
 
