@@ -33,12 +33,10 @@ _METRIC_MAP = {
     "qb_pass_tds": ("passing_tds", "pass_tds"),
     "qb_completions": ("completions", "comp"),
     "qb_pass_attempts": ("attempts", "att"),
-
     # RB
     "rb_rush_yards": ("rushing_yards", "rush_yds"),
     "rb_rush_tds": ("rushing_tds", "rush_tds"),
     "rb_longest_run": ("rushing_yards", "long_rush_proxy"),
-
     # WR / TE (TE aliases to WR)
     "wr_rec_yards": ("receiving_yards", "rec_yds"),
     "wr_receptions": ("receptions", "rec"),
@@ -48,7 +46,6 @@ _METRIC_MAP = {
     "te_receptions": ("receptions", "rec"),
     "te_longest_catch": ("receiving_yards", "long_rec_proxy"),
     "te_rec_tds": ("receiving_tds", "rec_tds"),
-
     # K
     "k_fg_made": ("field_goals_made", "fgm"),
 }
@@ -365,6 +362,7 @@ def compute_spread_probability(team: str, opponent: str, spread_line: float) -> 
             "sd_diff": SCORE_DIFF_SD
         }
     }
+
 
 
 
