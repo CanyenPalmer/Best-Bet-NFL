@@ -1,28 +1,41 @@
 # src/service/contracts.py
+"""
+Contracts (schemas) for Best Bet NFL.
+- TypedDicts keep the service layer lightweight and compatible with dict-based usage.
+- We can add Pydantic request/response models later for FastAPI validation.
+"""
+
 from __future__ import annotations
 from typing import Literal, TypedDict, List, Dict, Any
 
+# ---- Enums ----
 Market = Literal["prop", "moneyline", "spread", "total", "team_total"]
 Side = Literal["over", "under", "home", "away"]
 
+# ---- Singles ----
 class SingleBetReq(TypedDict, total=False):
+    """Input for a single market evaluation."""
     market: Market
     stake: float
-    odds_format: Literal["american"]
+    odds_format: Literal["american"]  # reserved for future formats
     odds: int
+
     # team markets
     team: str
     opponent: str
+
     # player prop markets
     player: str
     opponent_team: str
-    prop_kind: str
-    side: str
+    prop_kind: str   # e.g., qb_pass_yards, wr_rec_yards, rb_rush_tds
+    side: Side       # over/under for props
     line: float
-    # spread
+
+    # spread markets
     spread_line: float
 
 class SingleBetResp(TypedDict):
+    """Output for a single market evaluation."""
     label: str
     market: Market
     probability: float
@@ -35,17 +48,25 @@ class SingleBetResp(TypedDict):
     summary: str
     odds: int
 
+# ---- Parlays ----
 class ParlayLeg(TypedDict, total=False):
+    """A single leg within a parlay."""
     market: Market
     odds_format: Literal["american"]
     odds: int
+
+    # team leg
     team: str
     opponent: str
+
+    # player prop leg
     player: str
     opponent_team: str
     prop_kind: str
-    side: str
+    side: Side
     line: float
+
+    # spread leg
     spread_line: float
 
 class ParlayLegResp(TypedDict):
@@ -69,6 +90,7 @@ class ParlayResp(TypedDict):
     payout_if_win: float
     expected_value: float
 
+# ---- Batch ----
 class BatchReq(TypedDict):
     singles: List[SingleBetReq]
     parlays: List[ParlayReq]
@@ -76,3 +98,10 @@ class BatchReq(TypedDict):
 class BatchResp(TypedDict):
     singles: List[SingleBetResp]
     parlays: List[ParlayResp]
+
+__all__ = [
+    "Market", "Side",
+    "SingleBetReq", "SingleBetResp",
+    "ParlayLeg", "ParlayLegResp", "ParlayReq", "ParlayResp",
+    "BatchReq", "BatchResp",
+]
