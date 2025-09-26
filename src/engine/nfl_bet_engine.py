@@ -27,13 +27,14 @@ SEASONS = list(range(max(2009, CURR_SEASON - SEASONS_BACK + 1), CURR_SEASON + 1)
 CSV_URL = "https://github.com/nflverse/nflverse-data/releases/download/player_stats/stats_player_week_{year}.csv"
 
 # -----------------------------
-# Data caches
+# In-memory snapshot (light!)
 # -----------------------------
-_PLAYERS: Optional[pd.DataFrame] = None  # player, team, pos, metric, mu, sd, n_games
-_TEAM_ALLOWED: Optional[pd.DataFrame] = None  # team, metric, mu, sd, n_games
-_SNAPSHOT: Dict[str, Any] = {}
+_WEEKLY: Optional[pd.DataFrame] = None  # season, week, player_name, recent_team, opponent_team, position, stats...
+_LEAGUE_MEAN: Dict[str, float] = {}
+_LEAGUE_SD: Dict[str, float] = {}
+_SNAPSHOT: Dict[str, Any] = {}  # for /snapshot endpoint
 
-# Metric mapping -> (weekly column, internal key)
+# For mapping prop kinds to weekly columns and our internal keys
 _METRIC_MAP = {
     # QB
     "qb_pass_yards": ("passing_yards", "pass_yds"),
@@ -46,7 +47,7 @@ _METRIC_MAP = {
     "rb_rush_tds": ("rushing_tds", "rush_tds"),
     "rb_longest_run": ("rushing_yards", "long_rush_proxy"),  # proxy
 
-    # WR / TE (aliases: TE maps to WR keys)
+    # WR / TE (aliases -> WR keys)
     "wr_rec_yards": ("receiving_yards", "rec_yds"),
     "wr_receptions": ("receptions", "rec"),
     "wr_longest_catch": ("receiving_yards", "long_rec_proxy"),  # proxy
@@ -61,7 +62,7 @@ _METRIC_MAP = {
     "k_fg_made": ("field_goals_made", "fgm"),
 }
 
-# Team allowed mapping: opponent_team perspective
+# Team allowed mapping from opponent perspective
 _TEAM_ALLOWED_KEYS = {
     "pass_yds": "passing_yards",
     "pass_tds": "passing_tds",
@@ -74,7 +75,7 @@ _TEAM_ALLOWED_KEYS = {
     "rec_tds": "receiving_tds",
     "long_rec_proxy": "receiving_yards",
     "long_rush_proxy": "rushing_yards",
-    # points (computed below)
+    # points (computed via TD proxy)
     "points_for": None,
     "points": None
 }
@@ -98,10 +99,10 @@ def _poisson_sf(k_minus_1: float, lam: float) -> float:
 def _logit_blend(p_model: float, p_prior: float, w_model: float = 0.6) -> float:
     def logit(p): return math.log(max(1e-6, p) / max(1e-6, 1 - p))
     def inv(z):  return 1.0 / (1.0 + math.exp(-z))
-    return inv(w_model * logit(p_model) + (1 - w_model) * logit(p_prior))
+    return inv(w_model * logit(p_model) + (1 - w_model) * logit(prior))
 
 # -----------------------------
-# Lightweight CSV loader (with /tmp cache)
+# Lightweight CSV loader (+ /tmp cache)
 # -----------------------------
 _TMP = pathlib.Path("/tmp")
 
@@ -115,11 +116,9 @@ def _fetch_weekly_csv(year: int) -> pd.DataFrame:
         return pd.read_csv(cache, low_memory=False)
 
     url = CSV_URL.format(year=year)
-    resp = requests.get(url, timeout=30)
+    resp = requests.get(url, timeout=20)
     resp.raise_for_status()
-
-    # Persist to /tmp (ephemeral per instance)
-    cache.write_bytes(resp.content)
+    cache.write_bytes(resp.content)  # persist for this instance
     return pd.read_csv(io.BytesIO(resp.content), low_memory=False)
 
 def _load_weekly(seasons: List[int]) -> pd.DataFrame:
@@ -128,11 +127,8 @@ def _load_weekly(seasons: List[int]) -> pd.DataFrame:
         try:
             frames.append(_fetch_weekly_csv(y))
         except Exception as e:
-            # If a prior season file is missing early in the year, skip it.
-            # We'll still produce results from available seasons.
             print(f"[nfl_bet_engine] warn: failed loading {y}: {e}")
     if not frames:
-        # absolute fallback: empty frame with expected columns
         cols = [
             "season","week","player_name","recent_team","opponent_team","position",
             "completions","attempts","passing_yards","passing_tds",
@@ -142,169 +138,157 @@ def _load_weekly(seasons: List[int]) -> pd.DataFrame:
         ]
         return pd.DataFrame(columns=cols)
     df = pd.concat(frames, ignore_index=True)
-    # Make sure common columns exist
+
+    # Ensure expected columns exist
+    must = ["season","week","player_name","recent_team","opponent_team","position"]
+    for c in must:
+        if c not in df.columns:
+            df[c] = pd.NA
     for c in ["field_goals_made"]:
         if c not in df.columns:
             df[c] = 0
     return df
 
-# -----------------------------
-# Core ETL
-# -----------------------------
-def _last_n_non_null(values: pd.Series, n: int) -> pd.Series:
-    vv = values.dropna().astype(float)
-    if vv.empty:
-        return vv
-    return vv.iloc[-n:]
+def _ensure_loaded():
+    """Load weekly data & league baselines once. Cheap & cold-start friendly."""
+    global _WEEKLY, _LEAGUE_MEAN, _LEAGUE_SD, _SNAPSHOT
+    if _WEEKLY is not None:
+        return
+    seasons = SEASONS
+    weekly = _load_weekly(seasons)
 
-def _player_roll(series_tail: pd.Series) -> Tuple[float, float, int]:
-    n = len(series_tail)
-    if n == 0:
-        return 0.0, 0.0, 0
-    mu = float(series_tail.mean())
-    sd = float(series_tail.std(ddof=0)) if n > 1 else 0.0
-    return mu, sd, n
-
-def _compute_player_metrics(weekly: pd.DataFrame) -> pd.DataFrame:
-    df = weekly.rename(columns={
-        "player_name": "player",
-        "recent_team": "team",
-        "position": "pos"
-    }).sort_values(["player", "season", "week"])
-
-    # League baselines (for rookies <4 games)
-    league_means, league_sds = {}, {}
+    # Precompute league baselines (mean/sd) per key ONCE; used for rookies.
+    _LEAGUE_MEAN, _LEAGUE_SD = {}, {}
     for _, (col, key) in _METRIC_MAP.items():
-        if col not in df.columns:
-            continue
-        s = df[col].dropna().astype(float)
-        league_means[key] = float(s.mean()) if not s.empty else 0.0
-        league_sds[key] = float(s.std(ddof=0)) if not s.empty else 0.0
+        if col in weekly.columns:
+            s = pd.to_numeric(weekly[col], errors="coerce").dropna()
+            _LEAGUE_MEAN[key] = float(s.mean()) if not s.empty else 0.0
+            _LEAGUE_SD[key] = float(s.std(ddof=0)) if not s.empty else 0.0
+        else:
+            _LEAGUE_MEAN[key] = 0.0
+            _LEAGUE_SD[key] = 0.0
 
-    rows = []
-    for _, (col, key) in _METRIC_MAP.items():
-        if col not in df.columns:
-            continue
-        for player, g in df.groupby("player", sort=False):
-            tail = _last_n_non_null(g[col], HISTORY_GAMES)
-            n = len(tail)
-            if n < ROOKIE_MIN_GAMES:
-                mu, sd, n_used = league_means[key], league_sds[key], 0
-            else:
-                mu, sd, n_used = _player_roll(tail)
-            team = g["team"].dropna().iloc[-1] if not g["team"].dropna().empty else None
-            pos = g["pos"].dropna().iloc[-1] if not g["pos"].dropna().empty else None
-            rows.append({
-                "player": player,
-                "team": team,
-                "pos": pos,
-                "metric": key,
-                "mu": mu,
-                "sd": sd,
-                "n_games": int(n_used if n >= ROOKIE_MIN_GAMES else n)
-            })
-    return pd.DataFrame(rows)
-
-def _compute_team_allowed(weekly: pd.DataFrame) -> pd.DataFrame:
-    df = weekly.copy().sort_values(["season", "week"])
-    # Simple points proxy using TDs (keeps things simple and fast)
-    pass_td = df["passing_tds"] if "passing_tds" in df.columns else 0
-    rush_td = df["rushing_tds"] if "rushing_tds" in df.columns else 0
-    df["points_for_proxy"] = 6.0 * (pd.Series(pass_td).fillna(0) + pd.Series(rush_td).fillna(0))
-
-    rows = []
-    teams = sorted(set(df["recent_team"].dropna().unique()).union(set(df["opponent_team"].dropna().unique())))
-
-    def allowed_stat(col: str, metric_key: str):
-        for t in teams:
-            g = df[df["opponent_team"] == t]
-            tail = _last_n_non_null(g[col], HISTORY_GAMES) if col in g.columns else pd.Series([], dtype=float)
-            mu, sd, n = _player_roll(tail)
-            rows.append({"team": t, "metric": metric_key, "mu": mu if n>0 else 0.0, "sd": sd if n>1 else 0.0, "n_games": int(n)})
-
-    for key, col in _TEAM_ALLOWED_KEYS.items():
-        if key in ("points_for", "points") or col is None:
-            continue
-        if col in df.columns:
-            allowed_stat(col, key)
-
-    # Points for / allowed
-    for t in teams:
-        g_for = df[df["recent_team"] == t]
-        tail_for = _last_n_non_null(g_for["points_for_proxy"], HISTORY_GAMES)
-        mu_for, sd_for, n_for = _player_roll(tail_for)
-        rows.append({"team": t, "metric": "points_for", "mu": mu_for if n_for>0 else 21.0, "sd": sd_for if n_for>1 else 7.0, "n_games": int(n_for)})
-
-        g_vs = df[df["opponent_team"] == t]
-        tail_vs = _last_n_non_null(g_vs["points_for_proxy"], HISTORY_GAMES)
-        mu_vs, sd_vs, n_vs = _player_roll(tail_vs)
-        rows.append({"team": t, "metric": "points", "mu": mu_vs if n_vs>0 else 21.0, "sd": sd_vs if n_vs>1 else 7.0, "n_games": int(n_vs)})
-
-    return pd.DataFrame(rows)
+    _WEEKLY = weekly
+    _SNAPSHOT = {
+        "snapshot_ts": pd.Timestamp.utcnow().isoformat(timespec="seconds"),
+        "seasons": seasons,
+        "rows": int(len(weekly))
+    }
 
 # -----------------------------
 # Public refresh/load
 # -----------------------------
 def refresh_data(seasons: Optional[List[int]] = None) -> Dict[str, Any]:
     """
-    Pull weekly NFL data for given seasons (default = last SEASONS_BACK),
-    compute rolling player metrics (last 30) + rookie fallback,
-    compute team 'allowed' context, store in-memory caches.
-
-    Uses direct CSV loads from nflverse GitHub releases (lightweight).
+    Reload weekly NFL data (default: last SEASONS_BACK) and refresh league baselines.
+    No heavy per-player team caches are built here; we compute on-demand.
     """
-    global _PLAYERS, _TEAM_ALLOWED, _SNAPSHOT
+    global _WEEKLY, _LEAGUE_MEAN, _LEAGUE_SD, _SNAPSHOT
     use_seasons = seasons or SEASONS
-
     weekly = _load_weekly(use_seasons)
 
-    players = _compute_player_metrics(weekly)
-    teams = _compute_team_allowed(weekly)
+    _LEAGUE_MEAN, _LEAGUE_SD = {}, {}
+    for _, (col, key) in _METRIC_MAP.items():
+        if col in weekly.columns:
+            s = pd.to_numeric(weekly[col], errors="coerce").dropna()
+            _LEAGUE_MEAN[key] = float(s.mean()) if not s.empty else 0.0
+            _LEAGUE_SD[key] = float(s.std(ddof=0)) if not s.empty else 0.0
+        else:
+            _LEAGUE_MEAN[key] = 0.0
+            _LEAGUE_SD[key] = 0.0
 
-    _PLAYERS = players
-    _TEAM_ALLOWED = teams
+    _WEEKLY = weekly
     _SNAPSHOT = {
         "snapshot_ts": pd.Timestamp.utcnow().isoformat(timespec="seconds"),
         "seasons": use_seasons,
-        "player_rows": int(len(players)),
-        "team_rows": int(len(teams)),
-        "history_games": HISTORY_GAMES,
-        "rookie_min_games": ROOKIE_MIN_GAMES
+        "rows": int(len(weekly))
     }
     return {"status": "ok", **_SNAPSHOT}
 
 def get_snapshot() -> Dict[str, Any]:
+    _ensure_loaded()
     return dict(_SNAPSHOT)
 
-def _ensure_loaded():
-    if _PLAYERS is None or _TEAM_ALLOWED is None:
-        refresh_data()
+# -----------------------------
+# Lookups (on-demand, fast)
+# -----------------------------
+def _last_n_non_null(values: pd.Series, n: int) -> pd.Series:
+    vv = pd.to_numeric(values, errors="coerce").dropna().astype(float)
+    if vv.empty: return vv
+    return vv.iloc[-n:]
 
-# -----------------------------
-# Lookups
-# -----------------------------
 def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[str], Optional[str], int]:
+    """Return (mu, sd, last_team, pos, n_games) for the given player & metric key."""
     _ensure_loaded()
-    assert _PLAYERS is not None
-    g = _PLAYERS[(_PLAYERS["player"].str.lower() == (player or "").lower()) &
-                 (_PLAYERS["metric"] == metric_key)]
-    if g.empty:
-        g = _PLAYERS[(_PLAYERS["player"].str.lower().str.startswith((player or "").lower())) &
-                     (_PLAYERS["metric"] == metric_key)]
-    if g.empty:
+    assert _WEEKLY is not None
+    col = None
+    for c, k in _METRIC_MAP.values():
+        if k == metric_key:
+            col = c
+            break
+    if col is None:
         return 0.0, 0.0, None, None, 0
-    row = g.iloc[-1]
-    return float(row["mu"]), float(row["sd"]), row.get("team"), row.get("pos"), int(row.get("n_games", 0))
+
+    df = _WEEKLY
+    mask = df["player_name"].str.lower() == (player or "").lower()
+    sub = df[mask]
+    if sub.empty:
+        # fallback: startswith
+        mask = df["player_name"].str.lower().str.startswith((player or "").lower())
+        sub = df[mask]
+        if sub.empty:
+            # unknown player -> rookie baseline
+            return _LEAGUE_MEAN.get(metric_key, 0.0), _LEAGUE_SD.get(metric_key, 0.0), None, None, 0
+
+    # last known team/pos
+    team = sub["recent_team"].dropna().iloc[-1] if not sub["recent_team"].dropna().empty else None
+    pos = sub["position"].dropna().iloc[-1] if not sub["position"].dropna().empty else None
+
+    tail = _last_n_non_null(sub[col], HISTORY_GAMES) if col in sub.columns else pd.Series([], dtype=float)
+    n = len(tail)
+    if n < ROOKIE_MIN_GAMES:
+        return _LEAGUE_MEAN.get(metric_key, 0.0), _LEAGUE_SD.get(metric_key, 0.0), team, pos, 0
+
+    mu = float(tail.mean())
+    sd = float(tail.std(ddof=0)) if n > 1 else 0.0
+    return mu, sd, team, pos, n
 
 def _team_allowed_stat(team: str, metric_key: str) -> Tuple[float, float, int]:
+    """Return (mu, sd, n_games) of what the team allows for a given metric."""
     _ensure_loaded()
-    assert _TEAM_ALLOWED is not None
-    g = _TEAM_ALLOWED[(_TEAM_ALLOWED["team"].str.upper() == (team or "").upper()) &
-                      (_TEAM_ALLOWED["metric"] == metric_key)]
-    if g.empty:
+    assert _WEEKLY is not None
+    df = _WEEKLY
+
+    if metric_key in ("points_for", "points"):
+        # compute via TD proxy
+        pass_td = pd.to_numeric(df.get("passing_tds", 0), errors="coerce").fillna(0.0)
+        rush_td = pd.to_numeric(df.get("rushing_tds", 0), errors="coerce").fillna(0.0)
+        points_for_proxy = 6.0 * (pass_td + rush_td)
+        tmp = df.copy()
+        tmp["points_for_proxy"] = points_for_proxy
+
+        if metric_key == "points_for":
+            g = tmp[tmp["recent_team"].astype(str).str.upper() == (team or "").upper()]
+        else:
+            g = tmp[tmp["opponent_team"].astype(str).str.upper() == (team or "").upper()]
+
+        tail = _last_n_non_null(g["points_for_proxy"], HISTORY_GAMES)
+        n = len(tail)
+        mu = float(tail.mean()) if n > 0 else 21.0
+        sd = float(tail.std(ddof=0)) if n > 1 else 7.0
+        return mu, sd, n
+
+    # other metrics -> map to weekly column then filter opponent_team == team
+    weekly_col = _TEAM_ALLOWED_KEYS.get(metric_key)
+    if weekly_col is None or weekly_col not in df.columns:
         return 0.0, 0.0, 0
-    row = g.iloc[-1]
-    return float(row["mu"]), float(row["sd"]), int(row.get("n_games", 0))
+
+    g = df[df["opponent_team"].astype(str).str.upper() == (team or "").upper()]
+    tail = _last_n_non_null(g[weekly_col], HISTORY_GAMES)
+    n = len(tail)
+    mu = float(tail.mean()) if n > 0 else 0.0
+    sd = float(tail.std(ddof=0)) if n > 1 else 0.0
+    return mu, sd, n
 
 # -----------------------------
 # Public computations
@@ -313,26 +297,23 @@ def compute_prop_probability(player: str, opponent_team: str, kind: str,
                              side: str, line: float) -> Dict[str, Any]:
     """
     Returns: {p_hit, snapshot, debug}
-    Supports QB passing TDs, rushing TDs (any position), and WR/TE receiving TDs.
-    TE props are aliases of WR props (te_* -> wr_* keys where applicable).
     """
     kind = kind.lower()
-    # Normalize TE aliases to WR keys
     if kind.startswith("te_"):
         kind = kind.replace("te_", "wr_")
-    # Normalize QB rush TDs to RB rush TDs key
     if kind == "qb_rush_tds":
         kind = "rb_rush_tds"
 
     if kind not in _METRIC_MAP:
         raise ValueError(f"Unsupported prop kind: {kind}")
 
-    col, key = _METRIC_MAP[kind]
+    _, key = _METRIC_MAP[kind]
     p_mu, p_sd, p_team, p_pos, p_games = _player_stat(player, key)
     o_mu, o_sd, o_games = _team_allowed_stat(opponent_team, key)
 
     prior = 0.5  # neutral prior
 
+    # If truly unknown player numbers, lean on opponent distribution
     if p_games == 0 and (p_mu == 0.0 and p_sd == 0.0):
         sd_used = max(10.0, o_sd)
         p_over = 1.0 - _norm_cdf(line, o_mu, sd_used)
@@ -366,7 +347,10 @@ def compute_prop_probability(player: str, opponent_team: str, kind: str,
         p_over = 1.0 - _norm_cdf(line, mu_blend, sd_used)
         p_raw = p_over if side == "over" else 1.0 - p_over
 
-    p = _logit_blend(p_raw, prior, 0.6)
+    def logit(p): return math.log(max(1e-6, p) / max(1e-6, 1 - p))
+    def inv(z):  return 1.0 / (1.0 + math.exp(-z))
+    p = inv(0.6 * logit(p_raw) + 0.4 * logit(prior))
+
     return {
         "p_hit": max(0.0, min(1.0, float(p))),
         "snapshot": get_snapshot(),
@@ -395,6 +379,7 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "expected_points_against": float(exp_against),
         "snapshot": get_snapshot()
     }
+
 
 
 
