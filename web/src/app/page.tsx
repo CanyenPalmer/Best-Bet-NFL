@@ -50,6 +50,21 @@ export default function Page() {
         </div>
       </div>
 
+      {/* Hero */}
+      <div className="mx-auto max-w-6xl px-4 pt-8">
+        <div className="hero">
+          <div className="relative z-10 p-8 md:p-12">
+            <div className="text-2xl md:text-3xl font-bold">Best Bet NFL</div>
+            <p className="mt-2 text-white/80 max-w-2xl">
+              Paste your book’s lines. Get <span className="font-semibold text-white">actual hit probabilities</span> for props, moneylines, spreads, and parlays—so you can bet with confidence.
+            </p>
+            <div className="mt-4 text-sm text-white/70">
+              Data updates daily. Use <code className="bg-white/10 px-2 py-1 rounded">Refresh Data</code> for an on-demand refresh.
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Content */}
       <div className="mx-auto max-w-6xl px-4 py-6 grid md:grid-cols-3 gap-6">
         {/* Menu */}
@@ -288,5 +303,6 @@ function Field(props: {
     </label>
   );
 }
+
 
 
