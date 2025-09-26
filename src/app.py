@@ -1,3 +1,4 @@
+# src/app.py
 from __future__ import annotations
 from typing import Dict, Any
 from fastapi import FastAPI
@@ -6,7 +7,7 @@ from src.service import api as service
 
 app = FastAPI(title="Best Bet NFL API", version="0.1.0")
 
-# TODO: restrict this to your Vercel domain once deployed
+# During dev we allow all; lock this to your Vercel domain on deploy.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -37,3 +38,4 @@ def evaluate_parlay(req: Dict[str, Any]):
 @app.post("/evaluate/batch")
 def evaluate_batch(req: Dict[str, Any]):
     return service.evaluate_batch(req)  # type: ignore
+
