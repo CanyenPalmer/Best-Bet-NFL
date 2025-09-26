@@ -39,3 +39,4 @@ def evaluate_parlay(req: Dict[str, Any]):
 def evaluate_batch(req: Dict[str, Any]):
     return service.evaluate_batch(req)  # type: ignore
 
+
