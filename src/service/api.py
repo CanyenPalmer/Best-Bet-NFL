@@ -7,6 +7,7 @@ from .contracts import (
 )
 from ..engine import nfl_bet_engine as engine
 
+# --- helpers ---
 def _pct(p: float) -> str:
     return f"{round(100.0 * max(0.0, min(1.0, float(p))), 2):.2f}%"
 
@@ -22,12 +23,14 @@ def _ev(stake: float, p: float, american_odds: int) -> float:
     dec = _decimal_from_american(american_odds)
     return p * stake * (dec - 1.0) - (1.0 - p) * stake
 
+# --- public wrappers ---
 def refresh_data() -> Dict[str, Any]:
     return engine.refresh_data()
 
 def get_snapshot() -> Dict[str, Any]:
     return engine.get_snapshot()
 
+# --- core evaluators ---
 def evaluate_single(req: SingleBetReq) -> SingleBetResp:
     market = req.get("market", "prop")
     stake = float(req.get("stake", 0.0))
@@ -56,8 +59,10 @@ def evaluate_single(req: SingleBetReq) -> SingleBetResp:
         res = engine.compute_moneyline(team=team, opponent=opponent)
         probability = float(res["p_win"])
         snapshot = res.get("snapshot", {})
-        debug = {"expected_points_for": res.get("expected_points_for"),
-                 "expected_points_against": res.get("expected_points_against")}
+        debug = {
+            "expected_points_for": res.get("expected_points_for"),
+            "expected_points_against": res.get("expected_points_against")
+        }
         label = f"{team} moneyline vs {opponent}"
 
     elif market == "spread":
