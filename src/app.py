@@ -7,20 +7,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from src.service import api as service
 
-app = FastAPI(title="Best Bet NFL API", version="0.1.0")
+app = FastAPI(title="Best Bet NFL API", version="0.1.1")
 
-# --------------------------------------------------------------------
-# CORS: open for now to eliminate CORS as a cause of "failed to fetch".
-# Once everything is working, we can lock this down to your web origin.
-# --------------------------------------------------------------------
+# CORS wide-open for now (lock down later once stable)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],      # <-- temporarily allow all
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Optional: redirect "/" to your frontend if WEB_URL or WEB_URLS is set.
+# Optional root redirect
 _WEB_URL = os.getenv("WEB_URL", "").strip().rstrip("/")
 _WEB_URLS = os.getenv("WEB_URLS", "").strip()
 _FIRST_WEB = _WEB_URL or (_WEB_URLS.split(",")[0].strip().rstrip("/") if _WEB_URLS else "")
@@ -32,8 +29,7 @@ def root():
     return {
         "ok": True,
         "app": "Best Bet NFL API",
-        "hint": "Set WEB_URL or WEB_URLS env var to redirect this root to your frontend.",
-        "endpoints": ["/health", "/snapshot", "/refresh-data", "/evaluate/*"]
+        "endpoints": ["/health", "/snapshot", "/refresh-data", "/evaluate/*", "/debug/*"]
     }
 
 @app.get("/health")
@@ -64,6 +60,28 @@ def evaluate_parlay(req: Dict[str, Any]):
 @app.post("/evaluate/batch")
 def evaluate_batch(req: Dict[str, Any]):
     return service.evaluate_batch(req)  # type: ignore
+
+# -----------------------
+# Debug helpers (GET)
+# -----------------------
+@app.get("/debug/ping")
+def debug_ping():
+    return {"ok": True, "snapshot": service.get_snapshot()}
+
+@app.get("/debug/eval-sample")
+def debug_eval_sample():
+    # Small, deterministic example that doesn't need a body
+    sample = {
+        "market": "prop",
+        "stake": 100.0,
+        "odds": -110,
+        "player": "Patrick Mahomes",
+        "opponent_team": "BUF",
+        "prop_kind": "qb_pass_yards",
+        "side": "over",
+        "line": 275.5
+    }
+    return service.evaluate_single(sample)  # type: ignore
 
 
 
