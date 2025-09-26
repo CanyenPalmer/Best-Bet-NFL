@@ -96,8 +96,10 @@ def _poisson_sf(k_minus_1: float, lam: float) -> float:
     return max(0.0, 1.0 - cdf)
 
 def _logit_blend(p_model: float, p_prior: float, w_model: float = 0.6) -> float:
+    """Correctly blend model probability with prior on the logit scale."""
     def logit(p): return math.log(max(1e-6, p) / max(1e-6, 1 - p))
     def inv(z):  return 1.0 / (1.0 + math.exp(-z))
+    # BUG FIX: use p_prior (not undefined 'prior')
     return inv(w_model * logit(p_model) + (1 - w_model) * logit(p_prior))
 
 # -----------------------------
@@ -151,7 +153,7 @@ def _load_weekly(seasons: List[int]) -> pd.DataFrame:
 def _init_empty_baselines():
     global _LEAGUE_MEAN, _LEAGUE_SD
     _LEAGUE_MEAN = {k: 0.0 for _, k in _METRIC_MAP.values()}
-    _LEAGUE_SD = {k: 0.0 for _, k in _METRIC_MAP.values()}
+    _LEAGUE_SD   = {k: 0.0 for _, k in _METRIC_MAP.values()}
 
 def _ensure_minimal():
     """Ensure structures exist WITHOUT doing any network I/O."""
@@ -189,10 +191,10 @@ def refresh_data(seasons: Optional[List[int]] = None) -> Dict[str, Any]:
         if col in weekly.columns:
             s = pd.to_numeric(weekly[col], errors="coerce").dropna()
             _LEAGUE_MEAN[key] = float(s.mean()) if not s.empty else 0.0
-            _LEAGUE_SD[key] = float(s.std(ddof=0)) if not s.empty else 0.0
+            _LEAGUE_SD[key]   = float(s.std(ddof=0)) if not s.empty else 0.0
         else:
             _LEAGUE_MEAN[key] = 0.0
-            _LEAGUE_SD[key] = 0.0
+            _LEAGUE_SD[key]   = 0.0
 
     _WEEKLY = weekly
     _SNAPSHOT = {
@@ -376,6 +378,7 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "expected_points_against": float(exp_against),
         "snapshot": get_snapshot()
     }
+
 
 
 
