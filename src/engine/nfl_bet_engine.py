@@ -347,4 +347,34 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "snapshot": get_snapshot()
     }
 
+# Append to src/engine/nfl_bet_engine.py (below compute_moneyline)
+def compute_spread_probability(team: str, opponent: str, spread_line: float) -> Dict[str, Any]:
+    """
+    Probability that `team` covers the given spread_line (e.g., -2.5 means favorite).
+    Uses the same expected points framework as moneyline with Normal diff.
+    """
+    pf_mu, _, _ = _team_allowed_stat(team, "points_for")
+    pa_mu, _, _ = _team_allowed_stat(opponent, "points")
+    pf_mu_opp, _, _ = _team_allowed_stat(opponent, "points_for")
+    pa_mu_team, _, _ = _team_allowed_stat(team, "points")
+
+    exp_for = 0.7 * pf_mu + 0.3 * pa_mu
+    exp_against = 0.7 * pf_mu_opp + 0.3 * pa_mu_team
+
+    diff_mu = exp_for - exp_against  # team minus opponent
+    # P(diff > spread_line)
+    p_cover = 1.0 - _norm_cdf(spread_line, diff_mu, SCORE_DIFF_SD)
+    return {
+        "p_cover": max(0.0, min(1.0, float(p_cover))),
+        "expected_diff": float(diff_mu),
+        "snapshot": get_snapshot(),
+        "debug": {
+            "expected_points_for": float(exp_for),
+            "expected_points_against": float(exp_against),
+            "spread_line": float(spread_line),
+            "sd_diff": SCORE_DIFF_SD
+        }
+    }
+
+
 
