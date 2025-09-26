@@ -1,3 +1,4 @@
+# requirements.txt
 fastapi>=0.114
 uvicorn[standard]>=0.30
 pydantic>=2.6
@@ -8,8 +9,8 @@ python-dateutil
 # Math/Data
 numpy>=1.26
 pandas>=2.2
-polars>=1.4
 
-# Lightweight NFL data loader (replaces nfl-data-py + pyarrow)
-nflreadpy>=0.3.0
+# Lightweight NFL data loader (no PyArrow)
+polars>=1.3
+nflreadpy>=0.1.3
 
