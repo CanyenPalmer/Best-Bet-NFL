@@ -14,9 +14,11 @@ ROOKIE_MIN_GAMES = 4
 DEF_WEIGHT = 0.30
 LONG_SIGMA_FLOOR = 10.0
 SCORE_DIFF_SD = 13.0
+TOTAL_SD = 18.0
+TEAM_SD = 7.0
 
 CURR_SEASON = int(os.getenv("SEASON", "2025"))
-SEASONS_BACK = int(os.getenv("SEASONS_BACK", "6"))
+SEASONS_BACK = int(os.getenv("SEASONS_BACK", "2"))  # << default 2 to avoid cold-start timeouts
 SEASONS = list(range(max(2009, CURR_SEASON - SEASONS_BACK + 1), CURR_SEASON + 1))
 
 # -----------------------------
@@ -33,20 +35,24 @@ _METRIC_MAP = {
     "qb_pass_tds": ("passing_tds", "pass_tds"),
     "qb_completions": ("completions", "comp"),
     "qb_pass_attempts": ("attempts", "att"),
+
     # RB
     "rb_rush_yards": ("rushing_yards", "rush_yds"),
     "rb_rush_tds": ("rushing_tds", "rush_tds"),
     "rb_longest_run": ("rushing_yards", "long_rush_proxy"),
-    # WR / TE (TE aliases to WR)
+
+    # WR / TE (aliases: TE maps to WR keys)
     "wr_rec_yards": ("receiving_yards", "rec_yds"),
     "wr_receptions": ("receptions", "rec"),
     "wr_longest_catch": ("receiving_yards", "long_rec_proxy"),
     "wr_rec_tds": ("receiving_tds", "rec_tds"),
+
     "te_rec_yards": ("receiving_yards", "rec_yds"),
     "te_receptions": ("receptions", "rec"),
     "te_longest_catch": ("receiving_yards", "long_rec_proxy"),
     "te_rec_tds": ("receiving_tds", "rec_tds"),
-    # K
+
+    # Kicker
     "k_fg_made": ("field_goals_made", "fgm"),
 }
 
@@ -256,7 +262,7 @@ def compute_prop_probability(player: str, opponent_team: str, kind: str,
     TE props are aliases of WR props (te_* -> wr_* keys where applicable).
     """
     kind = kind.lower()
-    # TE aliases
+    # Normalize TE aliases to WR keys
     if kind.startswith("te_"):
         kind = kind.replace("te_", "wr_")
     # Normalize QB rush TDs to RB rush TDs key
@@ -335,33 +341,6 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "snapshot": get_snapshot()
     }
 
-def compute_spread_probability(team: str, opponent: str, spread_line: float) -> Dict[str, Any]:
-    """
-    Probability that `team` covers the given spread_line (e.g., -2.5 means favorite).
-    Uses the same expected points framework as moneyline with Normal diff.
-    """
-    pf_mu, _, _ = _team_allowed_stat(team, "points_for")
-    pa_mu, _, _ = _team_allowed_stat(opponent, "points")
-    pf_mu_opp, _, _ = _team_allowed_stat(opponent, "points_for")
-    pa_mu_team, _, _ = _team_allowed_stat(team, "points")
-
-    exp_for = 0.7 * pf_mu + 0.3 * pa_mu
-    exp_against = 0.7 * pf_mu_opp + 0.3 * pa_mu_team
-
-    diff_mu = exp_for - exp_against  # team minus opponent
-    # P(diff > spread_line)
-    p_cover = 1.0 - _norm_cdf(spread_line, diff_mu, SCORE_DIFF_SD)
-    return {
-        "p_cover": max(0.0, min(1.0, float(p_cover))),
-        "expected_diff": float(diff_mu),
-        "snapshot": get_snapshot(),
-        "debug": {
-            "expected_points_for": float(exp_for),
-            "expected_points_against": float(exp_against),
-            "spread_line": float(spread_line),
-            "sd_diff": SCORE_DIFF_SD
-        }
-    }
 
 
 
