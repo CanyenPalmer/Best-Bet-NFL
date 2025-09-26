@@ -1,9 +1,9 @@
 # src/engine/nfl_bet_engine.py
 from __future__ import annotations
-import math, os
+import math, os, io, pathlib
 from typing import Dict, Any, Tuple, Optional, List
 import pandas as pd
-import nflreadpy as nflr  # switched from nfl_data_py to nflreadpy
+import requests
 
 # -----------------------------
 # Settings
@@ -18,8 +18,13 @@ TOTAL_SD = 18.0
 TEAM_SD = 7.0
 
 CURR_SEASON = int(os.getenv("SEASON", "2025"))
-SEASONS_BACK = int(os.getenv("SEASONS_BACK", "2"))  # keep small to avoid cold-start timeouts
+# Keep this SMALL for serverless cold-start speed; you can raise later.
+SEASONS_BACK = int(os.getenv("SEASONS_BACK", "1"))
 SEASONS = list(range(max(2009, CURR_SEASON - SEASONS_BACK + 1), CURR_SEASON + 1))
+
+# nflverse CSV weekly player stats (one file per season)
+# Example: https://github.com/nflverse/nflverse-data/releases/download/player_stats/stats_player_week_2024.csv
+CSV_URL = "https://github.com/nflverse/nflverse-data/releases/download/player_stats/stats_player_week_{year}.csv"
 
 # -----------------------------
 # Data caches
@@ -39,17 +44,17 @@ _METRIC_MAP = {
     # RB
     "rb_rush_yards": ("rushing_yards", "rush_yds"),
     "rb_rush_tds": ("rushing_tds", "rush_tds"),
-    "rb_longest_run": ("rushing_yards", "long_rush_proxy"),
+    "rb_longest_run": ("rushing_yards", "long_rush_proxy"),  # proxy
 
     # WR / TE (aliases: TE maps to WR keys)
     "wr_rec_yards": ("receiving_yards", "rec_yds"),
     "wr_receptions": ("receptions", "rec"),
-    "wr_longest_catch": ("receiving_yards", "long_rec_proxy"),
+    "wr_longest_catch": ("receiving_yards", "long_rec_proxy"),  # proxy
     "wr_rec_tds": ("receiving_tds", "rec_tds"),
 
     "te_rec_yards": ("receiving_yards", "rec_yds"),
     "te_receptions": ("receptions", "rec"),
-    "te_longest_catch": ("receiving_yards", "long_rec_proxy"),
+    "te_longest_catch": ("receiving_yards", "long_rec_proxy"),  # proxy
     "te_rec_tds": ("receiving_tds", "rec_tds"),
 
     # Kicker
@@ -96,6 +101,54 @@ def _logit_blend(p_model: float, p_prior: float, w_model: float = 0.6) -> float:
     return inv(w_model * logit(p_model) + (1 - w_model) * logit(p_prior))
 
 # -----------------------------
+# Lightweight CSV loader (with /tmp cache)
+# -----------------------------
+_TMP = pathlib.Path("/tmp")
+
+def _fetch_weekly_csv(year: int) -> pd.DataFrame:
+    """
+    Download weekly player stats CSV for a season from nflverse releases.
+    Caches to /tmp to speed up warm invocations in the same function instance.
+    """
+    cache = _TMP / f"stats_player_week_{year}.csv"
+    if cache.exists():
+        return pd.read_csv(cache, low_memory=False)
+
+    url = CSV_URL.format(year=year)
+    resp = requests.get(url, timeout=30)
+    resp.raise_for_status()
+
+    # Persist to /tmp (ephemeral per instance)
+    cache.write_bytes(resp.content)
+    return pd.read_csv(io.BytesIO(resp.content), low_memory=False)
+
+def _load_weekly(seasons: List[int]) -> pd.DataFrame:
+    frames = []
+    for y in seasons:
+        try:
+            frames.append(_fetch_weekly_csv(y))
+        except Exception as e:
+            # If a prior season file is missing early in the year, skip it.
+            # We'll still produce results from available seasons.
+            print(f"[nfl_bet_engine] warn: failed loading {y}: {e}")
+    if not frames:
+        # absolute fallback: empty frame with expected columns
+        cols = [
+            "season","week","player_name","recent_team","opponent_team","position",
+            "completions","attempts","passing_yards","passing_tds",
+            "rushing_yards","rushing_tds",
+            "receiving_yards","receptions","receiving_tds",
+            "field_goals_made"
+        ]
+        return pd.DataFrame(columns=cols)
+    df = pd.concat(frames, ignore_index=True)
+    # Make sure common columns exist
+    for c in ["field_goals_made"]:
+        if c not in df.columns:
+            df[c] = 0
+    return df
+
+# -----------------------------
 # Core ETL
 # -----------------------------
 def _last_n_non_null(values: pd.Series, n: int) -> pd.Series:
@@ -113,7 +166,6 @@ def _player_roll(series_tail: pd.Series) -> Tuple[float, float, int]:
     return mu, sd, n
 
 def _compute_player_metrics(weekly: pd.DataFrame) -> pd.DataFrame:
-    # nflreadpy returns nflverse fields like: player_name, recent_team, opponent_team, position, completions, attempts, passing_yards, passing_tds, rushing_yards, rushing_tds, receiving_yards, receptions, etc. :contentReference[oaicite:2]{index=2}
     df = weekly.rename(columns={
         "player_name": "player",
         "recent_team": "team",
@@ -155,7 +207,7 @@ def _compute_player_metrics(weekly: pd.DataFrame) -> pd.DataFrame:
 
 def _compute_team_allowed(weekly: pd.DataFrame) -> pd.DataFrame:
     df = weekly.copy().sort_values(["season", "week"])
-    # Simple points proxy using TDs (keeps things light & consistent)
+    # Simple points proxy using TDs (keeps things simple and fast)
     pass_td = df["passing_tds"] if "passing_tds" in df.columns else 0
     rush_td = df["rushing_tds"] if "rushing_tds" in df.columns else 0
     df["points_for_proxy"] = 6.0 * (pd.Series(pass_td).fillna(0) + pd.Series(rush_td).fillna(0))
@@ -199,14 +251,12 @@ def refresh_data(seasons: Optional[List[int]] = None) -> Dict[str, Any]:
     compute rolling player metrics (last 30) + rookie fallback,
     compute team 'allowed' context, store in-memory caches.
 
-    Uses nflreadpy (Polars) and converts to pandas to keep the code unchanged.
+    Uses direct CSV loads from nflverse GitHub releases (lightweight).
     """
     global _PLAYERS, _TEAM_ALLOWED, _SNAPSHOT
     use_seasons = seasons or SEASONS
 
-    # nflreadpy returns a Polars DataFrame
-    weekly_pl = nflr.load_player_stats(use_seasons, summary_level="week")  # :contentReference[oaicite:3]{index=3}
-    weekly = weekly_pl.to_pandas()  # Convert to pandas for the rest of the pipeline
+    weekly = _load_weekly(use_seasons)
 
     players = _compute_player_metrics(weekly)
     teams = _compute_team_allowed(weekly)
@@ -345,6 +395,7 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "expected_points_against": float(exp_against),
         "snapshot": get_snapshot()
     }
+
 
 
 
