@@ -10,22 +10,17 @@ class SingleBetReq(TypedDict, total=False):
     stake: float
     odds_format: Literal["american"]
     odds: int
+    # team markets
     team: str
     opponent: str
+    # player prop markets
     player: str
     opponent_team: str
-    # prop kinds (examples):
-    # qb_pass_yards, qb_pass_tds, qb_pass_attempts, qb_completions, qb_rush_tds
-    # rb_rush_yards, rb_rush_tds, rb_longest_run
-    # wr_rec_yards, wr_receptions, wr_longest_catch, wr_rec_tds
-    # te_rec_yards, te_receptions, te_longest_catch, te_rec_tds
-    # k_fg_made
     prop_kind: str
-    side: Side
+    side: str
     line: float
+    # spread
     spread_line: float
-    total_line: float
-    team_total_line: float
 
 class SingleBetResp(TypedDict):
     label: str
@@ -38,22 +33,35 @@ class SingleBetResp(TypedDict):
     snapshot: Dict[str, Any]
     debug: Dict[str, Any]
     summary: str
+    odds: int
 
-class ParlayReq(TypedDict):
-    stake: float
-    legs: List[SingleBetReq]
-
-class ParlayLeg(TypedDict):
-    label: str
+class ParlayLeg(TypedDict, total=False):
     market: Market
+    odds_format: Literal["american"]
+    odds: int
+    team: str
+    opponent: str
+    player: str
+    opponent_team: str
+    prop_kind: str
+    side: str
+    line: float
+    spread_line: float
+
+class ParlayLegResp(TypedDict):
+    label: str
     probability: float
     probability_pct: str
     odds: int
-    summary: str
+    debug: Dict[str, Any]
+
+class ParlayReq(TypedDict):
+    stake: float
+    legs: List[ParlayLeg]
 
 class ParlayResp(TypedDict):
     stake: float
-    legs: List[ParlayLeg]
+    legs: List[ParlayLegResp]
     parlay_probability_independent: float
     parlay_probability_independent_pct: str
     correlation_note: str
