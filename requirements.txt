@@ -1,8 +1,10 @@
+# requirements.txt
 requests
-numpy
-pandas
+numpy>=1.26
+pandas>=2.0
 python-dateutil
 nfl-data-py
+pyarrow>=16.0.0
 fastapi>=0.114
 uvicorn[standard]>=0.30
 pydantic>=2.6
