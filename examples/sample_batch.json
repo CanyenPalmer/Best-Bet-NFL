@@ -35,13 +35,10 @@
           "market": "spread",
           "team": "KC",
           "opponent": "BUF",
-          "side": "home",
           "spread_line": -2.5,
           "odds": -105
         }
       ]
     }
   ]
-}
-
 }
