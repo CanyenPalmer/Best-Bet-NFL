@@ -10,7 +10,7 @@ app = FastAPI(title="Best Bet NFL API", version="0.1.0")
 # During dev allow all; once your web domain is final, lock it down.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # set to ["https://<your-web>.vercel.app"] after the UI is live
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -21,6 +21,11 @@ def health():
 
 @app.post("/refresh-data")
 def refresh():
+    return service.refresh_data()
+
+# GET alias for Vercel Cron (cron always performs GET)
+@app.get("/cron/refresh")
+def cron_refresh():
     return service.refresh_data()
 
 @app.get("/snapshot")
