@@ -10,13 +10,16 @@ class SingleBetReq(TypedDict, total=False):
     stake: float
     odds_format: Literal["american"]
     odds: int
+    # team
     team: str
     opponent: str
+    # player prop
     player: str
     opponent_team: str
     prop_kind: str
     side: Side
     line: float
+    # spread
     spread_line: float
 
 class SingleBetResp(TypedDict):
@@ -80,3 +83,4 @@ __all__ = [
     "ParlayLeg", "ParlayLegResp", "ParlayReq", "ParlayResp",
     "BatchReq", "BatchResp",
 ]
+
