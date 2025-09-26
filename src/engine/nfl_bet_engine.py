@@ -18,7 +18,7 @@ TOTAL_SD = 18.0
 TEAM_SD = 7.0
 
 CURR_SEASON = int(os.getenv("SEASON", "2025"))
-SEASONS_BACK = int(os.getenv("SEASONS_BACK", "2"))  # << default 2 to avoid cold-start timeouts
+SEASONS_BACK = int(os.getenv("SEASONS_BACK", "2"))  # keep small to avoid cold-start timeouts
 SEASONS = list(range(max(2009, CURR_SEASON - SEASONS_BACK + 1), CURR_SEASON + 1))
 
 # -----------------------------
