@@ -83,4 +83,3 @@ __all__ = [
     "ParlayLeg", "ParlayLegResp", "ParlayReq", "ParlayResp",
     "BatchReq", "BatchResp",
 ]
-
