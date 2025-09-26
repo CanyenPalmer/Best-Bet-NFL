@@ -18,7 +18,7 @@ TOTAL_SD = 18.0
 TEAM_SD = 7.0
 
 CURR_SEASON = int(os.getenv("SEASON", "2025"))
-SEASONS_BACK = int(os.getenv("SEASONS_BACK", "6"))
+SEASONS_BACK = int(os.getenv("SEASONS_BACK", "2"))  # keep small to avoid cold-start timeouts
 SEASONS = list(range(max(2009, CURR_SEASON - SEASONS_BACK + 1), CURR_SEASON + 1))
 
 # -----------------------------
@@ -113,7 +113,7 @@ def _player_roll(series_tail: pd.Series) -> Tuple[float, float, int]:
     return mu, sd, n
 
 def _compute_player_metrics(weekly: pd.DataFrame) -> pd.DataFrame:
-    # nflreadpy player stats columns align with nflreadr: player_name, recent_team, position, etc.
+    # nflreadpy returns nflverse fields like: player_name, recent_team, opponent_team, position, completions, attempts, passing_yards, passing_tds, rushing_yards, rushing_tds, receiving_yards, receptions, etc. :contentReference[oaicite:2]{index=2}
     df = weekly.rename(columns={
         "player_name": "player",
         "recent_team": "team",
@@ -205,7 +205,7 @@ def refresh_data(seasons: Optional[List[int]] = None) -> Dict[str, Any]:
     use_seasons = seasons or SEASONS
 
     # nflreadpy returns a Polars DataFrame
-    weekly_pl = nflr.load_player_stats(use_seasons, summary_level="week")
+    weekly_pl = nflr.load_player_stats(use_seasons, summary_level="week")  # :contentReference[oaicite:3]{index=3}
     weekly = weekly_pl.to_pandas()  # Convert to pandas for the rest of the pipeline
 
     players = _compute_player_metrics(weekly)
@@ -345,6 +345,7 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "expected_points_against": float(exp_against),
         "snapshot": get_snapshot()
     }
+
 
 
 
