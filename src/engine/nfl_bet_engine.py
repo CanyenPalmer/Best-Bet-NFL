@@ -3,7 +3,7 @@ from __future__ import annotations
 import math, os
 from typing import Dict, Any, Tuple, Optional, List
 import pandas as pd
-import nfl_data_py as nfl
+import nflreadpy as nflr  # switched from nfl_data_py to nflreadpy
 
 # -----------------------------
 # Settings
@@ -18,7 +18,7 @@ TOTAL_SD = 18.0
 TEAM_SD = 7.0
 
 CURR_SEASON = int(os.getenv("SEASON", "2025"))
-SEASONS_BACK = int(os.getenv("SEASONS_BACK", "2"))  # keep small to avoid cold-start timeouts
+SEASONS_BACK = int(os.getenv("SEASONS_BACK", "6"))
 SEASONS = list(range(max(2009, CURR_SEASON - SEASONS_BACK + 1), CURR_SEASON + 1))
 
 # -----------------------------
@@ -113,6 +113,7 @@ def _player_roll(series_tail: pd.Series) -> Tuple[float, float, int]:
     return mu, sd, n
 
 def _compute_player_metrics(weekly: pd.DataFrame) -> pd.DataFrame:
+    # nflreadpy player stats columns align with nflreadr: player_name, recent_team, position, etc.
     df = weekly.rename(columns={
         "player_name": "player",
         "recent_team": "team",
@@ -154,7 +155,7 @@ def _compute_player_metrics(weekly: pd.DataFrame) -> pd.DataFrame:
 
 def _compute_team_allowed(weekly: pd.DataFrame) -> pd.DataFrame:
     df = weekly.copy().sort_values(["season", "week"])
-    # Simple points proxy
+    # Simple points proxy using TDs (keeps things light & consistent)
     pass_td = df["passing_tds"] if "passing_tds" in df.columns else 0
     rush_td = df["rushing_tds"] if "rushing_tds" in df.columns else 0
     df["points_for_proxy"] = 6.0 * (pd.Series(pass_td).fillna(0) + pd.Series(rush_td).fillna(0))
@@ -170,11 +171,10 @@ def _compute_team_allowed(weekly: pd.DataFrame) -> pd.DataFrame:
             rows.append({"team": t, "metric": metric_key, "mu": mu if n>0 else 0.0, "sd": sd if n>1 else 0.0, "n_games": int(n)})
 
     for key, col in _TEAM_ALLOWED_KEYS.items():
-        if key in ("points_for", "points"):
+        if key in ("points_for", "points") or col is None:
             continue
-        if col is None:
-            continue
-        allowed_stat(col, key)
+        if col in df.columns:
+            allowed_stat(col, key)
 
     # Points for / allowed
     for t in teams:
@@ -198,10 +198,15 @@ def refresh_data(seasons: Optional[List[int]] = None) -> Dict[str, Any]:
     Pull weekly NFL data for given seasons (default = last SEASONS_BACK),
     compute rolling player metrics (last 30) + rookie fallback,
     compute team 'allowed' context, store in-memory caches.
+
+    Uses nflreadpy (Polars) and converts to pandas to keep the code unchanged.
     """
     global _PLAYERS, _TEAM_ALLOWED, _SNAPSHOT
     use_seasons = seasons or SEASONS
-    weekly = nfl.import_weekly_data(use_seasons)
+
+    # nflreadpy returns a Polars DataFrame
+    weekly_pl = nflr.load_player_stats(use_seasons, summary_level="week")
+    weekly = weekly_pl.to_pandas()  # Convert to pandas for the rest of the pipeline
 
     players = _compute_player_metrics(weekly)
     teams = _compute_team_allowed(weekly)
@@ -340,6 +345,7 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "expected_points_against": float(exp_against),
         "snapshot": get_snapshot()
     }
+
 
 
 
