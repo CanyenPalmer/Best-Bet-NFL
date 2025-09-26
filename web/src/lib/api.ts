@@ -17,16 +17,13 @@ export type SingleReq = {
   market: "prop" | "moneyline" | "spread";
   stake: number;
   odds: number;
-  // prop
   player?: string;
   opponent_team?: string;
   prop_kind?: string;
   side?: "over" | "under";
   line?: number;
-  // team
   team?: string;
   opponent?: string;
-  // spread
   spread_line?: number;
 };
 
@@ -40,11 +37,7 @@ export type SingleResp = {
   debug: Record<string, unknown>;
 };
 
-export type ParlayReq = {
-  stake: number;
-  legs: SingleReq[];
-};
-
+export type ParlayReq = { stake: number; legs: SingleReq[]; };
 export type ParlayResp = {
   stake: number;
   legs: { label: string; probability: number; probability_pct: string; odds: number }[];
@@ -58,5 +51,5 @@ export const api = {
   single: (req: SingleReq) => post<SingleResp>("/evaluate/single", req),
   parlay: (req: ParlayReq) => post<ParlayResp>("/evaluate/parlay", req),
   batch: (payload: unknown) => post("/evaluate/batch", payload),
-  refresh: () => post("/refresh-data", {}),
+  refresh: () => post("/refresh-data", {})
 };
