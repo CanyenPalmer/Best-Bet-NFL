@@ -40,6 +40,7 @@ export default function Page() {
 
   return (
     <main className="min-h-screen bg-ink">
+      {/* Top bar */}
       <div className="sticky top-0 z-10 backdrop-blur bg-ink/70 border-b border-white/10">
         <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
           <div className="text-lg font-semibold">Best Bet NFL</div>
@@ -49,6 +50,7 @@ export default function Page() {
         </div>
       </div>
 
+      {/* Content */}
       <div className="mx-auto max-w-6xl px-4 py-6 grid md:grid-cols-3 gap-6">
         {/* Menu */}
         <div className="card h-fit">
@@ -59,7 +61,7 @@ export default function Page() {
             <button className={`btn ${tab === "batch" ? "btn-primary" : ""}`} onClick={() => setTab("batch")}>Batch JSON</button>
           </div>
           <div className="mt-4 text-xs text-white/60">
-            Add your book’s lines → we return an <span className="font-semibold text-white">actual probability</span> so you can bet with confidence.
+            Provide your book’s lines → we return an <span className="font-semibold text-white">actual probability</span> so you can bet with confidence.
           </div>
         </div>
 
@@ -286,3 +288,4 @@ function Field(props: {
     </label>
   );
 }
+
