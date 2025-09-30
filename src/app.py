@@ -207,11 +207,3 @@ def sanity_prop(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"sanity_prop failed: {e}")
-
-
-
-
-
-
-
-
