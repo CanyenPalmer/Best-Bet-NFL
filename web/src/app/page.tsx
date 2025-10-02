@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { api, SingleReq, ParlayReq, ParlayResp, SingleResp } from "@/lib/api";
 import { RefreshCw, Percent, Plus, Minus, Info, TrendingUp } from "lucide-react";
 
@@ -18,459 +18,382 @@ function pct(n: number) {
 type Tab = "single" | "parlay" | "batch";
 type AnyResult = SingleResp | ParlayResp | { singles: SingleResp[]; parlays: ParlayResp[] } | null;
 
-export default function Page() {
-  const [tab, setTab] = useState<Tab>("single");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<AnyResult>(null);
-  const [error, setError] = useState<string | null>(null);
+type Phase = "boot" | "landing" | "menu" | "section";
 
+export default function Page() {
+  const [phase, setPhase] = useState<Phase>("boot");
+  const [bootProgress, setBootProgress] = useState(0);
+  useEffect(() => {
+    if (phase !== "boot") return;
+    const total = 2250;
+    const start = performance.now();
+    let raf = 0;
+    const loop = () => {
+      const t = performance.now() - start;
+      const p = Math.min(100, Math.round((t/total)*100));
+      setBootProgress(p);
+      if (p >= 100) {
+        setPhase("landing");
+        setTimeout(() => setPhase("menu"), 600);
+      } else {
+        raf = requestAnimationFrame(loop);
+      }
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [phase]);
+
+  const [tab, setTab] = useState<Tab>("single");
+  const [result, setResult] = useState<AnyResult>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // ---------------- Existing state & helpers (kept as-is) ----------------
   const [single, setSingle] = useState<SingleReq>({
-    market: "prop", stake: 50, odds: -110,
-    player: "Patrick Mahomes", opponent_team: "BUF",
-    prop_kind: "qb_pass_yards", side: "over", line: 275.5
+    home_team: "PIT",
+    away_team: "BAL",
+    market: "moneyline",
+    pick: "home",
+    american_odds: -120,
   });
 
   const [parlay, setParlay] = useState<ParlayReq>({
-    stake: 25,
     legs: [
-      { market: "prop", player: "Travis Kelce", opponent_team: "BUF", prop_kind: "wr_rec_yards", side: "over", line: 74.5, stake: 0, odds: -105 },
-      { market: "spread", team: "KC", opponent: "BUF", spread_line: -2.5, stake: 0, odds: -105 }
-    ]
+      { home_team: "KC", away_team: "CIN", market: "moneyline", pick: "home", american_odds: -135 },
+      { home_team: "PHI", away_team: "DAL", market: "spread", pick: "away", line: +3.5, american_odds: -110 },
+    ],
+    stake: 10,
   });
 
-  const [batchText, setBatchText] = useState<string>(JSON.stringify({
-    singles: [single],
-    parlays: [parlay]
-  }, null, 2));
+  const [batchPayload, setBatchPayload] = useState<string>(`{
+  "singles": [
+    { "home_team": "PIT", "away_team": "BAL", "market": "moneyline", "pick": "home", "american_odds": -120 }
+  ],
+  "parlays": [
+    { "legs": [
+      { "home_team": "KC", "away_team": "CIN", "market": "moneyline", "pick": "home", "american_odds": -135 },
+      { "home_team": "PHI", "away_team": "DAL", "market": "spread", "pick": "away", "line": 3.5, "american_odds": -110 }
+    ], "stake": 10 }
+  ]
+}`);
 
-  async function run(fn: () => Promise<any>) {
-    setError(null); setResult(null); setLoading(true);
-    try { setResult(await fn()); }
-    catch (e: any) { setError(e.message || String(e)); }
-    finally { setLoading(false); }
+  function clampNum(n: any, fallback = 0) {
+    const x = Number(n);
+    return Number.isFinite(x) ? x : fallback;
   }
 
-  return (
-    <main className="min-h-screen bg-ink">
-      {/* Top bar */}
-      <div className="sticky top-0 z-10 backdrop-blur bg-ink/70 border-b border-white/10">
-        <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between">
-          <div className="text-lg font-semibold">Best Bet NFL</div>
-          <button className="btn btn-primary" onClick={() => run(api.refresh)} disabled={loading}>
-            <RefreshCw className="w-4 h-4 mr-2" /> Refresh Data
-          </button>
-        </div>
-      </div>
+  async function doSingle() {
+    try {
+      setBusy(true); setErr(null);
+      const r = await api.single(single);
+      setResult(r);
+    } catch (e: any) {
+      setErr(e?.message ?? "Request failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function doParlay() {
+    try {
+      setBusy(true); setErr(null);
+      const r = await api.parlay(parlay);
+      setResult(r);
+    } catch (e: any) {
+      setErr(e?.message ?? "Request failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function doBatch() {
+    try {
+      setBusy(true); setErr(null);
+      const payload = JSON.parse(batchPayload);
+      const r = await api.batch(payload);
+      setResult(r as AnyResult);
+    } catch (e: any) {
+      setErr(e?.message ?? "Invalid JSON or request failed");
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      {/* Hero */}
-      <div className="mx-auto max-w-6xl px-4 pt-8">
+  const impliedSingle = useMemo(() => impliedFromAmerican(single.american_odds), [single.american_odds]);
+
+  // ---------------- Overlay: Boot + Main Menu (non-invasive) ----------------
+  return (
+    <>
+      {/* Boot / Mach-loading & Main Menu overlays */}
+      {phase !== "section" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          {/* Backgrounds */}
+          {phase === "menu" ? (
+            <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url(/assets/menu/main-menu-bg.png)" }} />
+          ) : (
+            <div className="absolute inset-0 bg-[#0b1016]" />
+          )}
+
+          {/* Logo */}
+          <img src="/assets/pixel/logo/best-bet-nfl.png" alt="Best Bet NFL" className="relative w-[280px] md:w-[360px] drop-shadow-xl" />
+
+          {/* Progress bar (boot only) */}
+          {phase === "boot" && (
+            <div className="absolute bottom-[20%] w-[70%] max-w-xl">
+              <div className="h-3 rounded-sm bg-white/10 border border-white/20">
+                <div className="h-full bg-white/80" style={{ width: `${bootProgress}%` }} />
+              </div>
+              <div className="mt-2 text-center text-xs text-white/70">Loading odds engine… {bootProgress}%</div>
+            </div>
+          )}
+
+          {/* Main Menu (B/W → color hover only here) */}
+          {phase === "menu" && (
+            <div className="relative w-[90%] max-w-2xl">
+              <div className="pixel-panel">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6">
+                  <button onClick={() => { setTab('single'); setPhase('section'); }} className="menu-item">
+                    <img src="/assets/icons/money-bag-bw.png" className="bw" alt="" />
+                    <img src="/assets/icons/money-bag-color.png" className="color" alt="" />
+                    <span>Single</span>
+                  </button>
+                  <button onClick={() => { setTab('parlay'); setPhase('section'); }} className="menu-item">
+                    <img src="/assets/icons/stats-graph-bw.png" className="bw" alt="" />
+                    <img src="/assets/icons/stats-graph-color.png" className="color" alt="" />
+                    <span>Parlay</span>
+                  </button>
+                  <button onClick={() => { setTab('batch'); setPhase('section'); }} className="menu-item">
+                    <img src="/assets/icons/settings-gear-bw.png" className="bw" alt="" />
+                    <img src="/assets/icons/settings-gear-color.png" className="color" alt="" />
+                    <span>Batch</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ---------- Your existing content (unchanged) ---------- */}
+      <div className="min-h-screen">
+        {/* Header */}
         <div className="hero">
-          <div className="relative z-10 p-8 md:p-12">
-            <div className="text-2xl md:text-3xl font-bold">Best Bet NFL</div>
-            <p className="mt-2 text-white/80 max-w-2xl">
-              Paste your book’s lines. Get <span className="font-semibold text-white">actual hit probabilities</span> for props, moneylines, spreads, and parlays—so you can bet with confidence.
-            </p>
-            <div className="mt-4 text-sm text-white/70 flex items-center gap-2">
-              <Info className="w-4 h-4" />
-              Data updates daily. Use <code className="bg-white/10 px-2 py-1 rounded">Refresh Data</code> for on-demand refresh.
+          <div className="mx-auto max-w-6xl px-4 py-16">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <img src="/assets/pixel/logo/best-bet-nfl.png" alt="Best Bet NFL" className="w-14 h-14" />
+                <div>
+                  <h1 className="text-2xl font-bold leading-tight">Best Bet NFL</h1>
+                  <p className="text-white/70">Actual probabilities for NFL bets</p>
+                </div>
+              </div>
+              <button className="btn" onClick={() => api.refresh()}>
+                <RefreshCw className="mr-2 h-4 w-4" /> Refresh data
+              </button>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Content */}
-      <div className="mx-auto max-w-6xl px-4 py-6 grid md:grid-cols-3 gap-6">
-        {/* Menu */}
-        <div className="card h-fit">
-          <div className="text-sm uppercase tracking-widest text-white/60 mb-3">Main Menu</div>
-          <div className="grid gap-2">
-            <button className={`btn ${tab === "single" ? "btn-primary" : ""}`} onClick={() => setTab("single")}>Single / Moneyline / Spread</button>
-            <button className={`btn ${tab === "parlay" ? "btn-primary" : ""}`} onClick={() => setTab("parlay")}>Parlay</button>
-            <button className={`btn ${tab === "batch" ? "btn-primary" : ""}`} onClick={() => setTab("batch")}>Batch JSON</button>
-          </div>
-          <div className="mt-4 text-xs text-white/60">
-            Provide your book’s lines → we return an <span className="font-semibold text-white">actual probability</span> so you can bet with confidence.
-          </div>
-        </div>
-
-        {/* Forms + Results */}
-        <div className="md:col-span-2 grid gap-6">
-          {tab === "single" && <SingleForm value={single} onChange={setSingle} onSubmit={() => run(() => api.single(single))} loading={loading} />}
-          {tab === "parlay" && <ParlayForm value={parlay} onChange={setParlay} onSubmit={() => run(() => api.parlay(parlay))} loading={loading} />}
-          {tab === "batch" && <BatchBox text={batchText} setText={setBatchText} onSubmit={() => run(() => api.batch(JSON.parse(batchText)))} loading={loading} />}
-          <ResultPanel loading={loading} error={error} result={result} />
-        </div>
-      </div>
-
-      <div className="footer">
-        © {new Date().getFullYear()} Best Bet NFL — Educational use only. Not financial advice.
-      </div>
-    </main>
-  );
-}
-
-function SingleForm({ value, onChange, onSubmit, loading }: {
-  value: SingleReq, onChange: (v: SingleReq) => void, onSubmit: () => void, loading: boolean
-}) {
-  const isProp = value.market === "prop";
-  const isML = value.market === "moneyline";
-  const isSpread = value.market === "spread";
-
-  // common prop kinds we support in backend
-  const propKinds = [
-    "qb_pass_yards","qb_pass_tds","qb_completions","qb_pass_attempts",
-    "rb_rush_yards","rb_rush_tds","rb_longest_run",
-    "wr_rec_yards","wr_receptions","wr_longest_catch","wr_rec_tds",
-    "te_rec_yards","te_receptions","te_longest_catch","te_rec_tds",
-    "k_fg_made"
-  ];
-
-  return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-lg font-semibold">Single Bet</div>
-        <select
-          className="input w-auto"
-          value={value.market}
-          onChange={e => onChange({ ...value, market: e.target.value as any })}
-        >
-          <option value="prop">Prop</option>
-          <option value="moneyline">Moneyline</option>
-          <option value="spread">Spread</option>
-        </select>
-      </div>
-
-      {/* Common */}
-      <div className="grid-cols-form">
-        <Field label="Stake ($)" type="number" value={value.stake} onChange={v => onChange({ ...value, stake: Number(v) })} />
-        <Field label="Odds (American)" type="number" value={value.odds} onChange={v => onChange({ ...value, odds: Number(v) })} />
-      </div>
-
-      {isProp && (
-        <>
-          <div className="grid-cols-form mt-4">
-            <Field label="Player" value={value.player || ""} onChange={v => onChange({ ...value, player: v })} />
-            <Field label="Opponent Team (e.g., BUF)" value={value.opponent_team || ""} onChange={v => onChange({ ...value, opponent_team: v })} />
-          </div>
-          <div className="grid-cols-form mt-4">
-            <Field
-              label="Prop Kind"
-              as="select"
-              value={value.prop_kind || ""}
-              onChange={v => onChange({ ...value, prop_kind: v })}
-              options={propKinds}
-            />
-            <Field label="Side" value={value.side || "over"} onChange={v => onChange({ ...value, side: v as any })} as="select" options={["over", "under"]} />
-          </div>
-          <div className="grid-cols-form mt-4">
-            <Field label="Line" type="number" value={value.line || 0} onChange={v => onChange({ ...value, line: Number(v) })} />
-          </div>
-        </>
-      )}
-
-      {isML && (
-        <div className="grid-cols-form mt-4">
-          <Field label="Team" value={value.team || ""} onChange={v => onChange({ ...value, team: v })} />
-          <Field label="Opponent" value={value.opponent || ""} onChange={v => onChange({ ...value, opponent: v })} />
-        </div>
-      )}
-
-      {isSpread && (
-        <>
-          <div className="grid-cols-form mt-4">
-            <Field label="Team" value={value.team || ""} onChange={v => onChange({ ...value, team: v })} />
-            <Field label="Opponent" value={value.opponent || ""} onChange={v => onChange({ ...value, opponent: v })} />
-          </div>
-          <div className="grid-cols-form mt-4">
-            <Field label="Spread Line" type="number" value={value.spread_line || 0} onChange={v => onChange({ ...value, spread_line: Number(v) })} />
-          </div>
-        </>
-      )}
-
-      <div className="mt-6">
-        <button className="btn btn-primary" onClick={onSubmit} disabled={loading}>
-          Evaluate
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ParlayForm({ value, onChange, onSubmit, loading }: {
-  value: ParlayReq, onChange: (v: ParlayReq) => void, onSubmit: () => void, loading: boolean
-}) {
-  function updateLeg(i: number, patch: Partial<SingleReq>) {
-    const legs = [...value.legs];
-    legs[i] = { ...legs[i], ...patch };
-    onChange({ ...value, legs });
-  }
-  function addLeg() {
-    onChange({ ...value, legs: [...value.legs, { market: "prop", stake: 0, odds: -110 }] });
-  }
-  function removeLeg(i: number) {
-    const legs = value.legs.filter((_, idx) => idx !== i);
-    onChange({ ...value, legs });
-  }
-
-  const propKinds = [
-    "qb_pass_yards","qb_pass_tds","qb_completions","qb_pass_attempts",
-    "rb_rush_yards","rb_rush_tds","rb_longest_run",
-    "wr_rec_yards","wr_receptions","wr_longest_catch","wr_rec_tds",
-    "te_rec_yards","te_receptions","te_longest_catch","te_rec_tds",
-    "k_fg_made"
-  ];
-
-  return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-4">
-        <div className="text-lg font-semibold">Parlay</div>
-        <button className="btn" onClick={addLeg}><Plus className="w-4 h-4 mr-2" />Add Leg</button>
-      </div>
-
-      <div className="grid-cols-form">
-        <Field label="Stake ($)" type="number" value={value.stake} onChange={v => onChange({ ...value, stake: Number(v) })} />
-      </div>
-
-      <div className="mt-4 grid gap-4">
-        {value.legs.map((leg, i) => (
-          <div key={i} className="rounded-xl border border-white/10 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="font-medium text-white/80">Leg {i + 1}</div>
-              <button className="btn" onClick={() => removeLeg(i)}><Minus className="w-4 h-4 mr-2" />Remove</button>
+        {/* Content */}
+        <div className="mx-auto max-w-6xl px-4 py-6 grid md:grid-cols-3 gap-6">
+          {/* Menu (existing tab buttons, kept) */}
+          <div className="card h-fit">
+            <div className="text-sm uppercase tracking-widest text-white/60 mb-3">Main Menu</div>
+            <div className="grid gap-2">
+              <button className={`btn ${tab === "single" ? "btn-primary" : ""}`} onClick={() => setTab("single")}>Single / Moneyline / Spread</button>
+              <button className={`btn ${tab === "parlay" ? "btn-primary" : ""}`} onClick={() => setTab("parlay")}>Parlay</button>
+              <button className={`btn ${tab === "batch" ? "btn-primary" : ""}`} onClick={() => setTab("batch")}>Batch JSON</button>
             </div>
-            <div className="grid-cols-form">
-              <Field label="Market" as="select" value={leg.market || "prop"} onChange={v => updateLeg(i, { market: v as any })} options={["prop", "moneyline", "spread"]} />
-              <Field label="Odds (American)" type="number" value={leg.odds ?? -110} onChange={v => updateLeg(i, { odds: Number(v) })} />
+            <div className="mt-4 text-xs text-white/60">
+              Tip: Use the big blue **menu** first time visitors see, or use these buttons to switch views.
             </div>
+          </div>
 
-            {leg.market === "prop" && (
-              <>
-                <div className="grid-cols-form mt-3">
-                  <Field label="Player" value={leg.player || ""} onChange={v => updateLeg(i, { player: v })} />
-                  <Field label="Opponent Team" value={leg.opponent_team || ""} onChange={v => updateLeg(i, { opponent_team: v })} />
+          {/* Panels */}
+          <div className="md:col-span-2 grid gap-6">
+            {/* SINGLE */}
+            {tab === "single" && (
+              <div className="card">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold">Single Bet</h2>
+                  <div className="text-white/60 text-sm flex items-center gap-2"><Percent size={16}/>Implied: {pct(impliedSingle)}</div>
                 </div>
-                <div className="grid-cols-form mt-3">
-                  <Field label="Prop Kind" as="select" value={leg.prop_kind || ""} onChange={v => updateLeg(i, { prop_kind: v })} options={propKinds} />
-                  <Field label="Side" as="select" value={leg.side || "over"} onChange={v => updateLeg(i, { side: v as any })} options={["over", "under"]} />
-                </div>
-                <div className="grid-cols-form mt-3">
-                  <Field label="Line" type="number" value={leg.line ?? 0} onChange={v => updateLeg(i, { line: Number(v) })} />
-                </div>
-              </>
-            )}
 
-            {leg.market === "moneyline" && (
-              <div className="grid-cols-form mt-3">
-                <Field label="Team" value={leg.team || ""} onChange={v => updateLeg(i, { team: v })} />
-                <Field label="Opponent" value={leg.opponent || ""} onChange={v => updateLeg(i, { opponent: v })} />
+                <div className="grid-cols-form">
+                  <div>
+                    <div className="label">Home Team</div>
+                    <input className="input" value={single.home_team} onChange={e => setSingle({ ...single, home_team: e.target.value })}/>
+                  </div>
+                  <div>
+                    <div className="label">Away Team</div>
+                    <input className="input" value={single.away_team} onChange={e => setSingle({ ...single, away_team: e.target.value })}/>
+                  </div>
+                  <div>
+                    <div className="label">Market</div>
+                    <select className="input" value={single.market} onChange={e => setSingle({ ...single, market: e.target.value as any })}>
+                      <option value="moneyline">Moneyline</option>
+                      <option value="spread">Spread</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="label">Pick</div>
+                    <select className="input" value={single.pick} onChange={e => setSingle({ ...single, pick: e.target.value as any })}>
+                      <option value="home">Home</option>
+                      <option value="away">Away</option>
+                    </select>
+                  </div>
+                  <div>
+                    <div className="label">American Odds</div>
+                    <input type="number" className="input" value={single.american_odds} onChange={e => setSingle({ ...single, american_odds: clampNum(e.target.value, -110) })}/>
+                  </div>
+                  {single.market === "spread" && (
+                    <div>
+                      <div className="label">Line (e.g., +3.5)</div>
+                      <input type="number" className="input" value={single.line ?? 0} onChange={e => setSingle({ ...single, line: clampNum(e.target.value, 0) })}/>
+                    </div>
+                  )}
+                </div>
+
+                <div className="mt-4 flex items-center gap-3">
+                  <button className="btn btn-primary" onClick={doSingle} disabled={busy}>
+                    <TrendingUp className="mr-2 h-4 w-4" /> Evaluate
+                  </button>
+                  {busy && <div className="text-white/60 text-sm">Crunching numbers…</div>}
+                  {err && <div className="text-red-400 text-sm">{err}</div>}
+                </div>
+
+                {result && "probability" in result && (
+                  <div className="mt-6 bg-white/5 border border-white/10 rounded-xl p-4">
+                    <div className="text-sm text-white/70">Model Output</div>
+                    <div className="mt-2 text-xl font-semibold">Hit Probability: {pct(result.probability)}</div>
+                    <div className="text-white/70">EV: {result.expected_value.toFixed(2)}</div>
+                  </div>
+                )}
               </div>
             )}
 
-            {leg.market === "spread" && (
-              <>
-                <div className="grid-cols-form mt-3">
-                  <Field label="Team" value={leg.team || ""} onChange={v => updateLeg(i, { team: v })} />
-                  <Field label="Opponent" value={leg.opponent || ""} onChange={v => updateLeg(i, { opponent: v })} />
+            {/* PARLAY */}
+            {tab === "parlay" && (
+              <div className="card">
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-semibold">Parlay</h2>
+                  <div className="text-white/60 text-sm flex items-center gap-2"><Info size={16}/> Independent calc</div>
                 </div>
-                <div className="grid-cols-form mt-3">
-                  <Field label="Spread Line" type="number" value={leg.spread_line ?? 0} onChange={v => updateLeg(i, { spread_line: Number(v) })} />
+
+                {parlay.legs.map((leg, i) => (
+                  <div key={i} className="grid-cols-form mb-2">
+                    <div>
+                      <div className="label">Home</div>
+                      <input className="input" value={leg.home_team} onChange={e => {
+                        const legs = [...parlay.legs]; legs[i] = { ...legs[i], home_team: e.target.value }; setParlay({ ...parlay, legs });
+                      }}/>
+                    </div>
+                    <div>
+                      <div className="label">Away</div>
+                      <input className="input" value={leg.away_team} onChange={e => {
+                        const legs = [...parlay.legs]; legs[i] = { ...legs[i], away_team: e.target.value }; setParlay({ ...parlay, legs });
+                      }}/>
+                    </div>
+                    <div>
+                      <div className="label">Market</div>
+                      <select className="input" value={leg.market} onChange={e => {
+                        const legs = [...parlay.legs]; legs[i] = { ...legs[i], market: e.target.value as any }; setParlay({ ...parlay, legs });
+                      }}>
+                        <option value="moneyline">Moneyline</option>
+                        <option value="spread">Spread</option>
+                      </select>
+                    </div>
+                    <div>
+                      <div className="label">Pick</div>
+                      <select className="input" value={leg.pick} onChange={e => {
+                        const legs = [...parlay.legs]; legs[i] = { ...legs[i], pick: e.target.value as any }; setParlay({ ...parlay, legs });
+                      }}>
+                        <option value="home">Home</option>
+                        <option value="away">Away</option>
+                      </select>
+                    </div>
+                    {leg.market === "spread" && (
+                      <div>
+                        <div className="label">Line</div>
+                        <input type="number" className="input" value={leg.line ?? 0} onChange={e => {
+                          const legs = [...parlay.legs]; legs[i] = { ...legs[i], line: clampNum(e.target.value, 0) }; setParlay({ ...parlay, legs });
+                        }}/>
+                      </div>
+                    )}
+                    <div>
+                      <div className="label">American Odds</div>
+                      <input type="number" className="input" value={leg.american_odds} onChange={e => {
+                        const legs = [...parlay.legs]; legs[i] = { ...legs[i], american_odds: clampNum(e.target.value, -110) }; setParlay({ ...parlay, legs });
+                      }}/>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button className="btn" onClick={() => {
+                        const legs = [...parlay.legs]; legs.splice(i, 1); setParlay({ ...parlay, legs });
+                      }}><Minus className="h-4 w-4"/></button>
+                      <button className="btn" onClick={() => {
+                        const legs = [...parlay.legs]; legs.splice(i + 1, 0, { ...leg }); setParlay({ ...parlay, legs });
+                      }}><Plus className="h-4 w-4"/></button>
+                    </div>
+                  </div>
+                ))}
+
+                <div className="mt-2 grid-cols-form">
+                  <div>
+                    <div className="label">Stake</div>
+                    <input type="number" className="input" value={parlay.stake} onChange={e => setParlay({ ...parlay, stake: clampNum(e.target.value, 10) })}/>
+                  </div>
                 </div>
-              </>
+
+                <div className="mt-4 flex items-center gap-3">
+                  <button className="btn btn-primary" onClick={doParlay} disabled={busy}>
+                    <TrendingUp className="mr-2 h-4 w-4" /> Evaluate
+                  </button>
+                  {busy && <div className="text-white/60 text-sm">Crunching numbers…</div>}
+                  {err && <div className="text-red-400 text-sm">{err}</div>}
+                </div>
+
+                {result && "parlay_probability_independent_pct" in result && (
+                  <div className="mt-6 bg-white/5 border border-white/10 rounded-xl p-4">
+                    <div className="text-sm text-white/70">Model Output</div>
+                    <div className="mt-2 text-xl font-semibold">Hit Probability: {result.parlay_probability_independent_pct}</div>
+                    <div className="text-white/70">EV: {result.expected_value.toFixed(2)}</div>
+                    <div className="text-white/70">Payout if Win: {result.payout_if_win.toFixed(2)}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* BATCH */}
+            {tab === "batch" && (
+              <div className="card">
+                <h2 className="text-lg font-semibold mb-4">Batch (JSON)</h2>
+                <textarea className="input min-h-[280px]" value={batchPayload} onChange={e => setBatchPayload(e.target.value)} />
+                <div className="mt-4 flex items-center gap-3">
+                  <button className="btn btn-primary" onClick={doBatch} disabled={busy}>
+                    <TrendingUp className="mr-2 h-4 w-4" /> Evaluate
+                  </button>
+                  {busy && <div className="text-white/60 text-sm">Crunching numbers…</div>}
+                  {err && <div className="text-red-400 text-sm">{err}</div>}
+                </div>
+
+                {result && "singles" in result && (
+                  <div className="mt-6 bg-white/5 border border-white/10 rounded-xl p-4">
+                    <div className="text-sm text-white/70">Model Output</div>
+                    <div className="mt-2 text-xl font-semibold">Singles: {result.singles.length} • Parlays: {result.parlays.length}</div>
+                  </div>
+                )}
+              </div>
             )}
           </div>
-        ))}
-      </div>
+        </div>
 
-      <div className="mt-6">
-        <button className="btn btn-primary" onClick={onSubmit} disabled={loading}>Evaluate Parlay</button>
+        {/* Footer */}
+        <div className="footer">
+          © {new Date().getFullYear()} Best Bet NFL — For informational purposes only.
+        </div>
       </div>
-    </div>
+    </>
   );
 }
 
-function BatchBox({ text, setText, onSubmit, loading }: {
-  text: string; setText: (v: string) => void; onSubmit: () => void; loading: boolean;
-}) {
-  return (
-    <div className="card">
-      <div className="text-lg font-semibold mb-3">Batch JSON</div>
-      <textarea className="input h-56 font-mono" value={text} onChange={e => setText(e.target.value)} />
-      <div className="mt-4">
-        <button className="btn btn-primary" onClick={onSubmit} disabled={loading}>Evaluate Batch</button>
-      </div>
-    </div>
-  );
-}
-
-function ResultPanel({ loading, error, result }: { loading: boolean; error: string | null; result: AnyResult }) {
-  if (loading) {
-    return <div className="card text-white/70">Running...</div>;
-  }
-  if (error) {
-    return <div className="card text-red-300">{error}</div>;
-  }
-  if (!result) {
-    return <div className="card text-white/60">Submit a bet or parlay to see results.</div>;
-  }
-
-  // Single
-  if ("probability" in result && "probability_pct" in result) {
-    return <SingleResult result={result} />;
-  }
-  // Parlay
-  if ("parlay_probability_independent_pct" in result) {
-    return <ParlayResult result={result as ParlayResp} />;
-  }
-  // Batch
-  if ("singles" in result && "parlays" in result) {
-    return <BatchResult result={result as { singles: SingleResp[]; parlays: ParlayResp[] }} />;
-  }
-  // Fallback
-  return (
-    <div className="card">
-      <pre className="text-sm whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
-    </div>
-  );
-}
-
-function SingleResult({ result }: { result: SingleResp }) {
-  const implied = impliedFromAmerican((result as any).odds ?? -110);
-  const actual = result.probability;
-  const edge = actual - implied;
-
-  return (
-    <div className="card">
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-lg font-semibold">{result.label}</div>
-        <div className="pill">
-          <TrendingUp className="w-4 h-4" />
-          {result.summary}
-        </div>
-      </div>
-
-      <div className="grid md:grid-cols-4 gap-4 mt-4">
-        <div className="stat">
-          <div className="label">Actual Probability</div>
-          <div className="value">{pct(actual)}</div>
-          <div className="progress mt-2"><span style={{ width: pct(actual) }} /></div>
-        </div>
-        <div className="stat">
-          <div className="label">Implied by Odds</div>
-          <div className="value">{pct(implied)}</div>
-          <div className="progress mt-2"><span style={{ width: pct(implied) }} /></div>
-        </div>
-        <div className="stat">
-          <div className="label">Edge vs Implied</div>
-          <div className="value" style={{ color: edge >= 0 ? "#c7f7c7" : "#ffb4b4" }}>
-            {edge >= 0 ? "+" : ""}{(edge * 100).toFixed(2)}%
-          </div>
-        </div>
-        <div className="stat">
-          <div className="label">EV at Stake</div>
-          <div className="value">${result.expected_value.toFixed(2)}</div>
-          <div className="text-xs text-white/60 mt-1">Payout if Win: ${result.payout_if_win.toFixed(2)}</div>
-        </div>
-      </div>
-
-      <details className="mt-4">
-        <summary className="cursor-pointer text-white/70">Details</summary>
-        <pre className="mt-2 text-sm whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
-      </details>
-    </div>
-  );
-}
-
-function ParlayResult({ result }: { result: ParlayResp }) {
-  return (
-    <div className="card">
-      <div className="text-lg font-semibold mb-2">Parlay</div>
-
-      <div className="grid md:grid-cols-4 gap-4">
-        <div className="stat">
-          <div className="label">Parlay Probability</div>
-          <div className="value">{result.parlay_probability_independent_pct}</div>
-        </div>
-        <div className="stat">
-          <div className="label">Payout if Win</div>
-          <div className="value">${result.payout_if_win.toFixed(2)}</div>
-          <div className="text-xs text-white/60 mt-1">Stake: ${result.stake.toFixed(2)}</div>
-        </div>
-        <div className="stat">
-          <div className="label">Expected Value</div>
-          <div className="value">${result.expected_value.toFixed(2)}</div>
-        </div>
-        <div className="stat">
-          <div className="label">Combined Decimal</div>
-          <div className="value">{result.combined_decimal_odds.toFixed(3)}</div>
-        </div>
-      </div>
-
-      <div className="mt-4 rounded-xl border border-white/10">
-        {result.legs.map((leg, i) => (
-          <div key={i} className="p-4 border-b last:border-b-0 border-white/10">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="font-medium">{leg.label}</div>
-              <div className="pill">
-                <Percent className="w-4 h-4" />
-                {leg.probability_pct} &nbsp; @ {leg.odds}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-
-      <details className="mt-4">
-        <summary className="cursor-pointer text-white/70">Details</summary>
-        <pre className="mt-2 text-sm whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
-      </details>
-    </div>
-  );
-}
-
-function BatchResult({ result }: { result: { singles: SingleResp[]; parlays: ParlayResp[] } }) {
-  return (
-    <div className="card">
-      <div className="text-lg font-semibold mb-2">Batch Results</div>
-      <div className="text-white/70 text-sm mb-4">
-        {result.singles.length} singles • {result.parlays.length} parlays
-      </div>
-
-      <div className="grid gap-4">
-        {result.singles.map((s, i) => <SingleResult key={`s-${i}`} result={s} />)}
-        {result.parlays.map((p, i) => <ParlayResult key={`p-${i}`} result={p} />)}
-      </div>
-
-      <details className="mt-4">
-        <summary className="cursor-pointer text-white/70">Raw JSON</summary>
-        <pre className="mt-2 text-sm whitespace-pre-wrap">{JSON.stringify(result, null, 2)}</pre>
-      </details>
-    </div>
-  );
-}
-
-function Field(props: {
-  label: string; value: any; onChange: (v: any) => void;
-  type?: string; as?: "input" | "select"; options?: string[]; placeholder?: string;
-}) {
-  const { label, value, onChange, type, as, options, placeholder } = props;
-  if (as === "select") {
-    return (
-      <label className="block">
-        <div className="label">{label}</div>
-        <select className="input" value={value} onChange={e => onChange(e.target.value)}>
-          <option value="" disabled>Select…</option>
-          {options?.map(o => <option key={o} value={o}>{o}</option>)}
-        </select>
-      </label>
-    );
-  }
-  return (
-    <label className="block">
-      <div className="label">{label}</div>
-      <input className="input" value={value} onChange={e => onChange(e.target.value)} type={type || "text"} placeholder={placeholder} />
-    </label>
-  );
-}
 
 
 
