@@ -28,7 +28,7 @@ CSV_URL = "https://github.com/nflverse/nflverse-data/releases/download/player_st
 _WEEKLY: Optional[pd.DataFrame] = None
 _SNAPSHOT: Dict[str, Any] = {}
 
-# For mapping prop kinds to weekly columns and our internal keys
+# For mapping prop kinds to weekly columns, internal keys, and position buckets
 _METRIC_MAP = {
     # QB
     "qb_pass_yards": ("passing_yards", "pass_yds", "QB"),
@@ -38,11 +38,11 @@ _METRIC_MAP = {
     # RB
     "rb_rush_yards": ("rushing_yards", "rush_yds", "RB"),
     "rb_rush_tds": ("rushing_tds", "rush_tds", "RB"),
-    "rb_longest_run": ("rushing_yards", "long_rush_proxy", "RB"),  # proxy
+    "rb_longest_run": ("rushing_yards", "long_rush_proxy", "RB"),
     # WR/TE
     "wr_rec_yards": ("receiving_yards", "rec_yds", "WRTE"),
     "wr_receptions": ("receptions", "rec", "WRTE"),
-    "wr_longest_catch": ("receiving_yards", "long_rec_proxy", "WRTE"),  # proxy
+    "wr_longest_catch": ("receiving_yards", "long_rec_proxy", "WRTE"),
     "wr_rec_tds": ("receiving_tds", "rec_tds", "WRTE"),
     "te_rec_yards": ("receiving_yards", "rec_yds", "WRTE"),
     "te_receptions": ("receptions", "rec", "WRTE"),
@@ -113,18 +113,43 @@ def _first_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
             return c
     return None
 
+def _normalize_name(s: str) -> str:
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9\s]", " ", s)  # strip punctuation
+    s = re.sub(r"\s+", " ", s).strip()
+    # drop suffix tokens
+    toks = s.split()
+    suffixes = {"jr", "sr", "ii", "iii", "iv", "v"}
+    toks = [t for t in toks if t not in suffixes]
+    return " ".join(toks)
+
 def _normalize_week_df(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    # identity
-    name_col = _first_col(df, ["player_name", "player_display_name", "name", "full_name"])
-    df["player_name"] = df[name_col].astype(str) if name_col else ""
+    # Try to build a best full name
+    fn_col = _first_col(df, ["player_first_name","first_name","firstname"])
+    ln_col = _first_col(df, ["player_last_name","last_name","lastname","player_surname"])
+    built_full = None
+    if fn_col and ln_col:
+        built_full = (df[fn_col].astype(str).str.strip() + " " + df[ln_col].astype(str).str.strip()).str.strip()
 
-    pos_col = _first_col(df, ["position", "pos"])
-    df["position"] = df[pos_col].astype(str) if pos_col else ""
+    name_col = _first_col(df, ["player_name","full_name","name","player_display_name","player","Player"])
+    if built_full is not None:
+        player_name = built_full
+    elif name_col:
+        # Expand initials like "P.Mahomes" -> "P Mahomes"
+        player_name = df[name_col].astype(str).str.replace(".", " ", regex=False)
+    else:
+        player_name = pd.Series([""], index=df.index)
 
-    team_col = _first_col(df, ["recent_team", "recent_team_abbr", "team", "team_abbr", "posteam"])
-    opp_col  = _first_col(df, ["opponent_team", "opp_team", "opp", "defteam"])
+    df["player_name"] = player_name.fillna("").astype(str)
+    df["player_name_norm"] = df["player_name"].map(_normalize_name)
+
+    pos_col = _first_col(df, ["position","pos"])
+    df["position"] = (df[pos_col].astype(str) if pos_col else "").str.upper()
+
+    team_col = _first_col(df, ["recent_team","recent_team_abbr","team","team_abbr","posteam"])
+    opp_col  = _first_col(df, ["opponent_team","opp_team","opp","defteam"])
     df["recent_team"] = (df[team_col].astype(str).str.upper() if team_col else "")
     df["opponent_team"] = (df[opp_col].astype(str).str.upper() if opp_col else "")
 
@@ -135,19 +160,19 @@ def _normalize_week_df(df: pd.DataFrame) -> pd.DataFrame:
         col = _first_col(df, cands)
         df[out] = pd.to_numeric(df[col], errors="coerce").fillna(0.0) if col else 0.0
 
-    numcol("completions",    ["completions", "pass_completions"])
-    numcol("attempts",       ["attempts", "pass_attempts"])
-    numcol("passing_yards",  ["passing_yards", "pass_yards", "yards_pass"])
-    numcol("passing_tds",    ["passing_tds", "pass_tds"])
-    numcol("rushing_yards",  ["rushing_yards", "rush_yards", "yards_rush"])
-    numcol("rushing_tds",    ["rushing_tds", "rush_tds"])
-    numcol("receiving_yards",["receiving_yards", "rec_yards", "yards_rec"])
-    numcol("receptions",     ["receptions", "rec"])
-    numcol("receiving_tds",  ["receiving_tds", "rec_tds"])
-    numcol("field_goals_made", ["field_goals_made", "fgm", "kicking_fg_made"])
+    numcol("completions",    ["completions","pass_completions"])
+    numcol("attempts",       ["attempts","pass_attempts"])
+    numcol("passing_yards",  ["passing_yards","pass_yards","yards_pass"])
+    numcol("passing_tds",    ["passing_tds","pass_tds"])
+    numcol("rushing_yards",  ["rushing_yards","rush_yards","yards_rush"])
+    numcol("rushing_tds",    ["rushing_tds","rush_tds"])
+    numcol("receiving_yards",["receiving_yards","rec_yards","yards_rec"])
+    numcol("receptions",     ["receptions","rec"])
+    numcol("receiving_tds",  ["receiving_tds","rec_tds"])
+    numcol("field_goals_made", ["field_goals_made","fgm","kicking_fg_made"])
 
     keep = [
-        "season","week","player_name","recent_team","opponent_team","position",
+        "season","week","player_name","player_name_norm","recent_team","opponent_team","position",
         "completions","attempts","passing_yards","passing_tds",
         "rushing_yards","rushing_tds",
         "receiving_yards","receptions","receiving_tds",
@@ -155,7 +180,7 @@ def _normalize_week_df(df: pd.DataFrame) -> pd.DataFrame:
     ]
     for k in keep:
         if k not in df.columns:
-            df[k] = "" if k in ["player_name","recent_team","opponent_team","position"] else 0
+            df[k] = "" if k in ["player_name","player_name_norm","recent_team","opponent_team","position"] else 0
     return df[keep]
 
 def _load_weekly(seasons: List[int]) -> pd.DataFrame:
@@ -168,7 +193,7 @@ def _load_weekly(seasons: List[int]) -> pd.DataFrame:
             print(f"[nfl_bet_engine] warn: failed loading {y}: {e}")
     if not frames:
         return pd.DataFrame(columns=[
-            "season","week","player_name","recent_team","opponent_team","position",
+            "season","week","player_name","player_name_norm","recent_team","opponent_team","position",
             "completions","attempts","passing_yards","passing_tds",
             "rushing_yards","rushing_tds",
             "receiving_yards","receptions","receiving_tds",
@@ -180,7 +205,7 @@ def _ensure_minimal():
     global _WEEKLY, _SNAPSHOT
     if _WEEKLY is None:
         _WEEKLY = pd.DataFrame(columns=[
-            "season","week","player_name","recent_team","opponent_team","position",
+            "season","week","player_name","player_name_norm","recent_team","opponent_team","position",
             "completions","attempts","passing_yards","passing_tds",
             "rushing_yards","rushing_tds",
             "receiving_yards","receptions","receiving_tds",
@@ -213,16 +238,8 @@ def get_snapshot() -> Dict[str, Any]:
     return dict(_SNAPSHOT)
 
 # -----------------------------
-# Helpers: player matching & baselines
+# Helpers: position, name matching & baselines
 # -----------------------------
-_SUFFIX_TOKENS = {"jr", "sr", "ii", "iii", "iv", "v"}
-
-def _tokenize_name(s: str) -> List[str]:
-    s = s.lower()
-    s = re.sub(r"[^a-z0-9\s]", " ", s)     # remove punctuation
-    toks = [t for t in s.split() if t and t not in _SUFFIX_TOKENS]
-    return toks
-
 def _pos_for_key(metric_key: str) -> str:
     for _, (col, key, pos) in _METRIC_MAP.items():
         if key == metric_key:
@@ -266,37 +283,50 @@ def _last_n_non_null(values: pd.Series, n: int) -> pd.Series:
     return vv.iloc[-n:]
 
 def _find_player_rows(df: pd.DataFrame, player: str) -> pd.DataFrame:
-    """Robust player matching: exact -> startswith -> token containment (first & last)."""
+    """
+    Robust player matching:
+      1) exact normalized name
+      2) startswith normalized
+      3) token containment
+      4) last-name + first-initial match
+      5) substring fallback
+    """
     target = (player or "").strip()
     if not target:
         return df.iloc[0:0]
 
-    names = df["player_name"].astype(str)
-    names_lower = names.str.lower()
-    t_lower = target.lower()
-
-    # exact
-    sub = df[names_lower == t_lower]
+    t_norm = _normalize_name(target)
+    names_norm = df["player_name_norm"].astype(str)
+    # 1) exact
+    sub = df[names_norm == t_norm]
     if not sub.empty:
         return sub
-
-    # startswith
-    sub = df[names_lower.str.startswith(t_lower)]
+    # 2) startswith
+    sub = df[names_norm.str.startswith(t_norm)]
     if not sub.empty:
         return sub
-
-    # token containment (e.g., "Patrick Mahomes" vs "Patrick Mahomes II")
-    toks = _tokenize_name(target)
+    # 3) token containment
+    toks = t_norm.split()
     if len(toks) >= 2:
         mask = pd.Series(True, index=df.index)
         for tok in toks:
-            mask = mask & names_lower.str.contains(fr"\b{re.escape(tok)}\b", regex=True)
+            mask = mask & names_norm.str.contains(fr"\b{re.escape(tok)}\b", regex=True)
         sub = df[mask]
         if not sub.empty:
             return sub
-
-    # last-resort: contains whole string (riskier, but helps odd formats)
-    sub = df[names_lower.str.contains(re.escape(t_lower), regex=True)]
+        # 4) last-name + first-initial
+        last = toks[-1]
+        first = toks[0]
+        first_initial = first[0]
+        # names with last name present
+        mask_last = names_norm.str.contains(fr"\b{re.escape(last)}\b", regex=True)
+        if mask_last.any():
+            first_tokens = names_norm.str.split().str[0].str[:1]  # first initial from normalized name
+            sub2 = df[mask_last & (first_tokens == first_initial)]
+            if not sub2.empty:
+                return sub2
+    # 5) substring fallback
+    sub = df[names_norm.str.contains(re.escape(t_norm), regex=True)]
     return sub
 
 # -----------------------------
@@ -309,6 +339,7 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
     """
     _ensure_minimal()
     assert _WEEKLY is not None
+    # map key -> weekly column
     col = None
     for _, (c, k, _) in _METRIC_MAP.items():
         if k == metric_key:
@@ -321,7 +352,6 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
     sub = _find_player_rows(df, player)
     if sub.empty:
         mu_b, sd_b, _ = _league_pos_stats(metric_key)
-        # infer pos guess from metric key
         pos_guess = _pos_for_key(metric_key)
         return mu_b, sd_b, None, pos_guess, 0
 
@@ -361,10 +391,10 @@ def _team_allowed_stat(team: str, metric_key: str) -> Tuple[float, float, int]:
 
         if metric_key == "points_for":
             side = tmp[tmp["recent_team"].astype(str).str.upper() == tkey]
-            per_game = side.groupby(["season", "week", "recent_team"])["points_for_proxy"].sum()
+            per_game = side.groupby(["season","week","recent_team"])["points_for_proxy"].sum()
         else:
             side = tmp[tmp["opponent_team"].astype(str).str.upper() == tkey]
-            per_game = side.groupby(["season", "week", "recent_team"])["points_for_proxy"].sum()
+            per_game = side.groupby(["season","week","recent_team"])["points_for_proxy"].sum()
 
         tail = _last_n_non_null(per_game, HISTORY_GAMES)
         n = len(tail)
@@ -409,7 +439,6 @@ def compute_prop_probability(player: str, opponent_team: str, kind: str,
 
     prior = 0.5  # neutral prior
 
-    # If we couldn't find enough true player history, p_mu/p_sd are position baselines.
     long_floor = key in ("long_rec_proxy", "long_rush_proxy")
     sd_player = max(p_sd, LONG_SIGMA_FLOOR) if long_floor else p_sd
 
@@ -506,6 +535,7 @@ def get_team_allowed(team: str, metric_or_kind: str) -> Dict[str, Any]:
         key = kk
     mu, sd, n = _team_allowed_stat(team, key)
     return {"team": team.upper(), "metric_key": key, "mu": mu, "sd": sd, "n_games": n}
+
 
 
 
