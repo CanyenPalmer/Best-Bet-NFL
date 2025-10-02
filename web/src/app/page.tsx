@@ -116,7 +116,7 @@ export default function Page() {
     finally { setBusy(false); }
   }
 
-  // FIX: reference american_odds via a safe cast so TS doesn't complain
+  // Safe cast for TS-only typing mismatch
   const impliedSingle = useMemo(
     () => impliedFromAmerican((((single as any).american_odds as number) ?? 0)),
     [ (single as any).american_odds ]
@@ -137,7 +137,7 @@ export default function Page() {
             <div className="absolute inset-0 bg-[#0b1016]" />
           )}
 
-          {/* Logo (persists from boot through landing; fades when menu mounts) */}
+          {/* Logo (persists from boot through landing; shown above menu) */}
           <img
             src="/assets/pixel/logo/best-bet-nfl.png"
             alt="Best Bet NFL"
@@ -156,36 +156,49 @@ export default function Page() {
             </div>
           )}
 
-          {/* Main Menu with B/W → Color hover (only here) */}
+          {/* Main Menu — NO panel image; just a clean grid with your four widgets */}
           {phase === "menu" && (
-            <div className="relative w-[90%] max-w-2xl">
-              <div className="pixel-panel">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6">
-                  <button
-                    onClick={() => { setTab("single"); setPhase("section"); }}
-                    className="menu-item"
-                  >
-                    <img src="/assets/icons/money-bag-bw.png" className="bw" alt="" />
-                    <img src="/assets/icons/money-bag-color.png" className="color" alt="" />
-                    <span>Single</span>
-                  </button>
-                  <button
-                    onClick={() => { setTab("parlay"); setPhase("section"); }}
-                    className="menu-item"
-                  >
-                    <img src="/assets/icons/stats-graph-bw.png" className="bw" alt="" />
-                    <img src="/assets/icons/stats-graph-color.png" className="color" alt="" />
-                    <span>Parlay</span>
-                  </button>
-                  <button
-                    onClick={() => { setTab("batch"); setPhase("section"); }}
-                    className="menu-item"
-                  >
-                    <img src="/assets/icons/settings-gear-bw.png" className="bw" alt="" />
-                    <img src="/assets/icons/settings-gear-color.png" className="color" alt="" />
-                    <span>Batch</span>
-                  </button>
-                </div>
+            <div className="relative w-[92%] max-w-3xl mt-8">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-2">
+                {/* Place Bet — money bag */}
+                <button
+                  onClick={() => { setTab("single"); setPhase("section"); }}
+                  className="menu-item"
+                >
+                  <img src="/assets/icons/money-bag-bw.png" className="bw" alt="" />
+                  <img src="/assets/icons/money-bag-color.png" className="color" alt="" />
+                  <span>Place Bet</span>
+                </button>
+
+                {/* My Stats — bar graph (maps to Batch tab for now) */}
+                <button
+                  onClick={() => { setTab("batch"); setPhase("section"); }}
+                  className="menu-item"
+                >
+                  <img src="/assets/icons/stats-graph-bw.png" className="bw" alt="" />
+                  <img src="/assets/icons/stats-graph-color.png" className="color" alt="" />
+                  <span>My Stats</span>
+                </button>
+
+                {/* Settings — gear (maps to Parlay tab for now) */}
+                <button
+                  onClick={() => { setTab("parlay"); setPhase("section"); }}
+                  className="menu-item"
+                >
+                  <img src="/assets/icons/settings-gear-bw.png" className="bw" alt="" />
+                  <img src="/assets/icons/settings-gear-color.png" className="color" alt="" />
+                  <span>Settings</span>
+                </button>
+
+                {/* Exit — exit stop (just closes overlay) */}
+                <button
+                  onClick={() => { setPhase("section"); }}
+                  className="menu-item"
+                >
+                  <img src="/assets/icons/exit-stop-bw.png" className="bw" alt="" />
+                  <img src="/assets/icons/exit-stop-color.png" className="color" alt="" />
+                  <span>Exit</span>
+                </button>
               </div>
             </div>
           )}
@@ -196,7 +209,7 @@ export default function Page() {
       <div className="min-h-screen">
         {/* Header */}
         <div className="hero">
-          <div className="mx-auto max-w-6xl px_4 py-16">
+          <div className="mx-auto max-w-6xl px-4 py-16">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <img
@@ -229,7 +242,7 @@ export default function Page() {
               <button className={`btn ${tab === "batch" ? "btn-primary" : ""}`} onClick={() => setTab("batch")}>Batch JSON</button>
             </div>
             <div className="mt-4 text-xs text-white/60">
-              Tip: New visitors see the full **pixel main menu** first, but you can switch here anytime.
+              Tip: New visitors see the pixel menu first, but you can switch views here.
             </div>
           </div>
 
@@ -434,6 +447,7 @@ export default function Page() {
     </>
   );
 }
+
 
 
 
