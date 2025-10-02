@@ -1,4 +1,4 @@
-"use client";
+""use client";
 
 import { useMemo, useState, useEffect } from "react";
 import { api, SingleReq, ParlayReq, ParlayResp, SingleResp } from "@/lib/api";
@@ -123,8 +123,6 @@ export default function Page() {
   );
 
   /* ---------- dynamic background per view ---------- */
-  // For the main app content, change the hero bg based on which "section" user is viewing.
-  // single -> betting, batch -> stats, parlay -> settings
   const heroBg =
     tab === "single"
       ? "/assets/bg/bg-betting.png"
@@ -166,60 +164,87 @@ export default function Page() {
             </div>
           )}
 
-          {/* HOME (start screen) */}
+          {/* HOME (start screen) with solid background button */}
           {phase === "home" && (
             <div className="relative w-[92%] max-w-xl mt-2">
               <button
                 onClick={() => setPhase("menu")}
-                className="w-full px-6 py-4 rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 transition text-lg font-bold text-center"
+                className="w-full px-6 py-4 rounded-xl font-bold text-center shadow-lg transition"
                 aria-label="Start"
+                style={{
+                  backgroundColor: "#5b63ff",        // soft indigo
+                  borderColor: "rgba(255,255,255,0.28)",
+                  color: "#ffffff",
+                  borderWidth: 1
+                }}
               >
                 START
               </button>
-              <div className="mt-3 text-center text-xs text-white/60">
+              <div className="mt-3 text-center text-xs text-white/80">
                 Press START to enter the main menu
               </div>
             </div>
           )}
 
-          {/* Main Menu (logo above, then options; Exit returns to home) */}
+          {/* Main Menu (solid colored buttons) */}
           {phase === "menu" && (
             <div className="relative w-[92%] max-w-3xl mt-2">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-2">
-                {/* Place Bet — money bag */}
+                {/* Place Bet — green */}
                 <button
                   onClick={() => { setTab("single"); setPhase("section"); }}
-                  className="menu-item"
+                  className="menu-item text-white shadow-lg"
+                  style={{
+                    backgroundColor: "#2b9a66",          // medium green
+                    borderColor: "rgba(255,255,255,0.28)",
+                    borderWidth: 1
+                  }}
                 >
                   <img src="/assets/icons/money-bag-bw.png" className="bw" alt="" />
                   <img src="/assets/icons/money-bag-color.png" className="color" alt="" />
                   <span>Place Bet</span>
                 </button>
 
-                {/* My Stats — bar graph */}
+                {/* My Stats — blue */}
                 <button
                   onClick={() => { setTab("batch"); setPhase("section"); }}
-                  className="menu-item"
+                  className="menu-item text-white shadow-lg"
+                  style={{
+                    backgroundColor: "#2b6ea6",          // medium blue
+                    borderColor: "rgba(255,255,255,0.28)",
+                    borderWidth: 1
+                  }}
                 >
                   <img src="/assets/icons/stats-graph-bw.png" className="bw" alt="" />
                   <img src="/assets/icons/stats-graph-color.png" className="color" alt="" />
                   <span>My Stats</span>
                 </button>
 
-                {/* Settings — gear */}
+                {/* Settings — yellow (use dark text for contrast) */}
                 <button
                   onClick={() => { setTab("parlay"); setPhase("section"); }}
-                  className="menu-item"
+                  className="menu-item shadow-lg"
+                  style={{
+                    backgroundColor: "#d1a500",          // warm yellow
+                    borderColor: "rgba(0,0,0,0.25)",
+                    borderWidth: 1,
+                    color: "#000000"
+                  }}
                 >
                   <img src="/assets/icons/settings-gear-bw.png" className="bw" alt="" />
                   <img src="/assets/icons/settings-gear-color.png" className="color" alt="" />
                   <span>Settings</span>
                 </button>
 
-                {/* Exit — exit stop → back to START */}
+                {/* Exit — red */}
                 <button
                   onClick={() => { setPhase("home"); }}
-                  className="menu-item"
+                  className="menu-item text-white shadow-lg"
+                  style={{
+                    backgroundColor: "#bf2b3a",          // medium red
+                    borderColor: "rgba(255,255,255,0.28)",
+                    borderWidth: 1
+                  }}
                 >
                   <img src="/assets/icons/exit-stop-bw.png" className="bw" alt="" />
                   <img src="/assets/icons/exit-stop-color.png" className="color" alt="" />
@@ -231,7 +256,7 @@ export default function Page() {
         </div>
       )}
 
-      {/* ---------- EXISTING APP CONTENT (engine untouched) ---------- */}
+      {/* ---------- MAIN APP CONTENT (engine untouched) ---------- */}
       <div className="min-h-screen">
         {/* Always-available return to Main Menu when in a section */}
         {phase === "section" && (
@@ -241,6 +266,11 @@ export default function Page() {
               className="btn"
               aria-label="Return to Main Menu"
               title="Main Menu"
+              style={{
+                backgroundColor: "rgba(255,255,255,0.08)",
+                borderColor: "rgba(255,255,255,0.18)",
+                borderWidth: 1
+              }}
             >
               Main Menu
             </button>
@@ -252,7 +282,8 @@ export default function Page() {
           className="hero"
           style={phase === "section" ? { backgroundImage: `url('${heroBg}')` } : undefined}
         >
-          <div className="mx-auto max-w-6xl px-4 py-16">
+          {/* FIX: raise content above the hero ::after overlay so buttons are clickable */}
+          <div className="relative z-10 mx-auto max-w-6xl px-4 py-16">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <img
@@ -267,8 +298,17 @@ export default function Page() {
                   </p>
                 </div>
               </div>
-              <button className="btn" onClick={() => api.refresh()}>
-                <RefreshCw className="mr-2 h-4 w-4" /> Refresh data
+              <button
+                className="btn"
+                onClick={() => api.refresh()}
+                title="Refresh data"
+                style={{
+                  backgroundColor: "rgba(255,255,255,0.10)",
+                  borderColor: "rgba(255,255,255,0.20)",
+                  borderWidth: 1
+                }}
+              >
+                <RefreshCw className="mr-2 h-4 w-4" /> Refresh
               </button>
             </div>
           </div>
