@@ -10,24 +10,18 @@ body { @apply bg-ink text-white; }
 .card { @apply bg-panel/90 rounded-2xl shadow-xl p-6 border border-white/5; }
 .input { @apply w-full bg-white/5 border border-white/10 rounded-lg px-3 py-2 outline-none focus:ring-2 focus:ring-white/30; }
 .label { @apply text-sm text-white/70 mb-1; }
-.btn { @apply inline-flex items-center justify-center rounded-2xl px-4 py-2 font-medium border border-white/10 hover:border-white/20 transition; }
+.btn { @apply inline-flex items-center justify-center rounded-2xl px-3 py-2 text-sm font-medium border border-white/10 hover:border-white/20 transition; }
 .btn-primary { @apply bg-white/10 hover:bg-white/20; }
 .grid-cols-form { @apply grid grid-cols-1 md:grid-cols-2 gap-4; }
 
-/* Pills & stat blocks */
-.pill { @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-sm; }
-.stat { @apply rounded-xl border border-white/10 bg-white/5 p-4; }
-.stat .label { @apply text-xs text-white/60 mb-1; }
-.stat .value { @apply text-lg font-semibold; }
+/* Colors */
+.bg-ink { background: #0b1016; }
+.bg-panel { background: #0d131d; }
 
-/* Simple progress bar */
-.progress { @apply h-2 w-full rounded-full bg-white/10 overflow-hidden; }
-.progress > span { @apply block h-full bg-white/60; }
-
-/* Hero background (place your image at /web/public/assets/field.jpg) */
+/* Hero */
 .hero {
   @apply relative overflow-hidden rounded-2xl border border-white/10;
-  background-image: url('/assets/field.jpg'); /* change filename if needed */
+  background-image: url('/assets/bg/bg-betting.png');
   background-size: cover;
   background-position: center;
 }
@@ -40,3 +34,28 @@ body { @apply bg-ink text-white; }
 /* Footer */
 .footer { @apply text-center text-xs text-white/50 py-8; }
 .footer a { @apply underline decoration-white/30 hover:decoration-white; }
+
+/* Pixel panels and menu items */
+.pixel-panel {
+  position: relative;
+  background-image: url('/assets/menu/main-menu-panel-filled-gutter.png');
+  background-size: cover;
+  background-position: center;
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 0.75rem;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.45);
+}
+.menu-item {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: 16px; border-radius: 0.75rem; border: 1px solid rgba(255,255,255,.08);
+  background: rgba(0,0,0,.25);
+  transition: transform .12s ease;
+}
+.menu-item .color { display: none; }
+.menu-item .bw { display: block; }
+.menu-item:hover { transform: translateY(-2px); background: rgba(255,255,255,.05); }
+.menu-item:focus { outline: 2px solid rgba(255,255,255,.4); outline-offset: 2px; }
+.menu-item:hover .bw, .menu-item:focus .bw { display: none; }
+.menu-item:hover .color, .menu-item:focus .color { display: block; }
+.menu-item span { margin-top: 8px; font-weight: 600; }
+
