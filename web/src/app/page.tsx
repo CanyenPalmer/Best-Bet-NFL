@@ -4,7 +4,7 @@ import { useMemo, useState, useEffect } from "react";
 import { api, SingleReq, ParlayReq, ParlayResp, SingleResp } from "@/lib/api";
 import { RefreshCw, Percent, Plus, Minus, Info, TrendingUp } from "lucide-react";
 
-/** Utility: American odds -> implied probability (0..1) */
+/* ---------- helpers (unchanged) ---------- */
 function impliedFromAmerican(odds: number): number {
   const ao = Number(odds);
   if (Number.isNaN(ao)) return 0.5;
@@ -16,39 +16,47 @@ function pct(n: number) {
 }
 
 type Tab = "single" | "parlay" | "batch";
-type AnyResult = SingleResp | ParlayResp | { singles: SingleResp[]; parlays: ParlayResp[] } | null;
+type AnyResult =
+  | SingleResp
+  | ParlayResp
+  | { singles: SingleResp[]; parlays: ParlayResp[] }
+  | null;
 
+/* ---------- new: simple phase state for overlays ---------- */
 type Phase = "boot" | "landing" | "menu" | "section";
 
 export default function Page() {
   const [phase, setPhase] = useState<Phase>("boot");
   const [bootProgress, setBootProgress] = useState(0);
+
+  /* Boot progress → landing → menu */
   useEffect(() => {
     if (phase !== "boot") return;
     const total = 2250;
-    const start = performance.now();
+    const t0 = performance.now();
     let raf = 0;
-    const loop = () => {
-      const t = performance.now() - start;
-      const p = Math.min(100, Math.round((t/total)*100));
+    const tick = () => {
+      const elapsed = performance.now() - t0;
+      const p = Math.min(100, Math.round((elapsed / total) * 100));
       setBootProgress(p);
       if (p >= 100) {
         setPhase("landing");
-        setTimeout(() => setPhase("menu"), 600);
+        const id = setTimeout(() => setPhase("menu"), 600); // logo hold before menu
+        return () => clearTimeout(id);
       } else {
-        raf = requestAnimationFrame(loop);
+        raf = requestAnimationFrame(tick);
       }
     };
-    raf = requestAnimationFrame(loop);
+    raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [phase]);
 
+  /* -------- existing app state (unchanged) -------- */
   const [tab, setTab] = useState<Tab>("single");
-  const [result, setResult] = useState<AnyResult>(null);
   const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<AnyResult>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // ---------------- Existing state & helpers (kept as-is) ----------------
   const [single, setSingle] = useState<SingleReq>({
     home_team: "PIT",
     away_team: "BAL",
@@ -83,57 +91,54 @@ export default function Page() {
   }
 
   async function doSingle() {
-    try {
-      setBusy(true); setErr(null);
+    try { setBusy(true); setErr(null);
       const r = await api.single(single);
       setResult(r);
-    } catch (e: any) {
-      setErr(e?.message ?? "Request failed");
-    } finally {
-      setBusy(false);
-    }
+    } catch (e: any) { setErr(e?.message ?? "Request failed"); }
+    finally { setBusy(false); }
   }
   async function doParlay() {
-    try {
-      setBusy(true); setErr(null);
+    try { setBusy(true); setErr(null);
       const r = await api.parlay(parlay);
       setResult(r);
-    } catch (e: any) {
-      setErr(e?.message ?? "Request failed");
-    } finally {
-      setBusy(false);
-    }
+    } catch (e: any) { setErr(e?.message ?? "Request failed"); }
+    finally { setBusy(false); }
   }
   async function doBatch() {
-    try {
-      setBusy(true); setErr(null);
+    try { setBusy(true); setErr(null);
       const payload = JSON.parse(batchPayload);
       const r = await api.batch(payload);
       setResult(r as AnyResult);
-    } catch (e: any) {
-      setErr(e?.message ?? "Invalid JSON or request failed");
-    } finally {
-      setBusy(false);
-    }
+    } catch (e: any) { setErr(e?.message ?? "Invalid JSON or request failed"); }
+    finally { setBusy(false); }
   }
 
-  const impliedSingle = useMemo(() => impliedFromAmerican(single.american_odds), [single.american_odds]);
+  const impliedSingle = useMemo(
+    () => impliedFromAmerican(single.american_odds),
+    [single.american_odds]
+  );
 
-  // ---------------- Overlay: Boot + Main Menu (non-invasive) ----------------
   return (
     <>
-      {/* Boot / Mach-loading & Main Menu overlays */}
+      {/* ---------- OVERLAYS: boot + landing + menu ---------- */}
       {phase !== "section" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center fade-in">
           {/* Backgrounds */}
           {phase === "menu" ? (
-            <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url(/assets/menu/main-menu-bg.png)" }} />
+            <div
+              className="absolute inset-0 bg-cover bg-center"
+              style={{ backgroundImage: "url(/assets/menu/main-menu-bg.png)" }}
+            />
           ) : (
             <div className="absolute inset-0 bg-[#0b1016]" />
           )}
 
-          {/* Logo */}
-          <img src="/assets/pixel/logo/best-bet-nfl.png" alt="Best Bet NFL" className="relative w-[280px] md:w-[360px] drop-shadow-xl" />
+          {/* Logo (persists from boot through landing; fades when menu mounts) */}
+          <img
+            src="/assets/pixel/logo/best-bet-nfl.png"
+            alt="Best Bet NFL"
+            className="relative w-[280px] md:w-[360px] drop-shadow-xl"
+          />
 
           {/* Progress bar (boot only) */}
           {phase === "boot" && (
@@ -141,26 +146,37 @@ export default function Page() {
               <div className="h-3 rounded-sm bg-white/10 border border-white/20">
                 <div className="h-full bg-white/80" style={{ width: `${bootProgress}%` }} />
               </div>
-              <div className="mt-2 text-center text-xs text-white/70">Loading odds engine… {bootProgress}%</div>
+              <div className="mt-2 text-center text-xs text-white/70">
+                Loading odds engine… {bootProgress}%
+              </div>
             </div>
           )}
 
-          {/* Main Menu (B/W → color hover only here) */}
+          {/* Main Menu with B/W → Color hover (only here) */}
           {phase === "menu" && (
             <div className="relative w-[90%] max-w-2xl">
               <div className="pixel-panel">
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 p-6">
-                  <button onClick={() => { setTab('single'); setPhase('section'); }} className="menu-item">
+                  <button
+                    onClick={() => { setTab("single"); setPhase("section"); }}
+                    className="menu-item"
+                  >
                     <img src="/assets/icons/money-bag-bw.png" className="bw" alt="" />
                     <img src="/assets/icons/money-bag-color.png" className="color" alt="" />
                     <span>Single</span>
                   </button>
-                  <button onClick={() => { setTab('parlay'); setPhase('section'); }} className="menu-item">
+                  <button
+                    onClick={() => { setTab("parlay"); setPhase("section"); }}
+                    className="menu-item"
+                  >
                     <img src="/assets/icons/stats-graph-bw.png" className="bw" alt="" />
                     <img src="/assets/icons/stats-graph-color.png" className="color" alt="" />
                     <span>Parlay</span>
                   </button>
-                  <button onClick={() => { setTab('batch'); setPhase('section'); }} className="menu-item">
+                  <button
+                    onClick={() => { setTab("batch"); setPhase("section"); }}
+                    className="menu-item"
+                  >
                     <img src="/assets/icons/settings-gear-bw.png" className="bw" alt="" />
                     <img src="/assets/icons/settings-gear-color.png" className="color" alt="" />
                     <span>Batch</span>
@@ -172,17 +188,23 @@ export default function Page() {
         </div>
       )}
 
-      {/* ---------- Your existing content (unchanged) ---------- */}
+      {/* ---------- EXISTING APP CONTENT (engine untouched) ---------- */}
       <div className="min-h-screen">
         {/* Header */}
         <div className="hero">
           <div className="mx-auto max-w-6xl px-4 py-16">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
-                <img src="/assets/pixel/logo/best-bet-nfl.png" alt="Best Bet NFL" className="w-14 h-14" />
+                <img
+                  src="/assets/pixel/logo/best-bet-nfl.png"
+                  alt="Best Bet NFL"
+                  className="w-14 h-14"
+                />
                 <div>
                   <h1 className="text-2xl font-bold leading-tight">Best Bet NFL</h1>
-                  <p className="text-white/70">Actual probabilities for NFL bets</p>
+                  <p className="text-white/70">
+                    Actual probabilities for NFL bets
+                  </p>
                 </div>
               </div>
               <button className="btn" onClick={() => api.refresh()}>
@@ -194,7 +216,7 @@ export default function Page() {
 
         {/* Content */}
         <div className="mx-auto max-w-6xl px-4 py-6 grid md:grid-cols-3 gap-6">
-          {/* Menu (existing tab buttons, kept) */}
+          {/* Menu (existing tab buttons) */}
           <div className="card h-fit">
             <div className="text-sm uppercase tracking-widest text-white/60 mb-3">Main Menu</div>
             <div className="grid gap-2">
@@ -203,7 +225,7 @@ export default function Page() {
               <button className={`btn ${tab === "batch" ? "btn-primary" : ""}`} onClick={() => setTab("batch")}>Batch JSON</button>
             </div>
             <div className="mt-4 text-xs text-white/60">
-              Tip: Use the big blue **menu** first time visitors see, or use these buttons to switch views.
+              Tip: New visitors see the full **pixel main menu** first, but you can switch here anytime.
             </div>
           </div>
 
@@ -214,7 +236,7 @@ export default function Page() {
               <div className="card">
                 <div className="flex items-center justify-between mb-4">
                   <h2 className="text-lg font-semibold">Single Bet</h2>
-                  <div className="text-white/60 text-sm flex items-center gap-2"><Percent size={16}/>Implied: {pct(impliedSingle)}</div>
+                  <div className="text-white/60 text-sm flex items-center gap-2"><Percent size={16}/>Implied: {pct(impliedFromAmerican(single.american_odds))}</div>
                 </div>
 
                 <div className="grid-cols-form">
@@ -377,7 +399,9 @@ export default function Page() {
                 {result && "singles" in result && (
                   <div className="mt-6 bg-white/5 border border-white/10 rounded-xl p-4">
                     <div className="text-sm text-white/70">Model Output</div>
-                    <div className="mt-2 text-xl font-semibold">Singles: {result.singles.length} • Parlays: {result.parlays.length}</div>
+                    <div className="mt-2 text-xl font-semibold">
+                      Singles: {result.singles.length} • Parlays: {result.parlays.length}
+                    </div>
                   </div>
                 )}
               </div>
@@ -387,12 +411,13 @@ export default function Page() {
 
         {/* Footer */}
         <div className="footer">
-          © {new Date().getFullYear()} Best Bet NFL — For informational purposes only.
+          © {new Date().getFullYear()} Best Bet NFL — Educational use only. Not financial advice.
         </div>
       </div>
     </>
   );
 }
+
 
 
 
