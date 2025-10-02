@@ -18,7 +18,7 @@ TOTAL_SD = 18.0
 TEAM_SD = 7.0
 
 CURR_SEASON = int(os.getenv("SEASON", "2025"))
-SEASONS_BACK = int(os.getenv("SEASONS_BACK", "1"))  # keep small for serverless speed
+SEASONS_BACK = int(os.getenv("SEASONS_BACK", "1"))  # adjust via env in Vercel if desired
 SEASONS = list(range(max(2009, CURR_SEASON - SEASONS_BACK + 1), CURR_SEASON + 1))
 
 # nflverse CSV weekly player stats (one file per season)
@@ -195,19 +195,6 @@ def _last_n_non_null(values: pd.Series, n: int) -> pd.Series:
     if vv.empty: return vv
     return vv.iloc[-n:]
 
-def _resolve_metric_key(kind_or_key: str) -> str:
-    """Accepts either prop kind (e.g., 'qb_pass_yards') or internal key (e.g., 'pass_yds')."""
-    if not kind_or_key:
-        raise ValueError("metric/kind is required")
-    k = kind_or_key.strip().lower()
-    if k in _METRIC_MAP:
-        return _METRIC_MAP[k][1]
-    # maybe already a key
-    keys = {v[1] for v in _METRIC_MAP.values()}
-    if k in keys or k in ("points_for", "points"):
-        return k
-    raise ValueError(f"Unknown metric/kind: {kind_or_key}")
-
 def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[str], Optional[str], int]:
     """
     Return (mu, sd, last_team, pos, n_games) for the given player & metric key.
@@ -215,7 +202,7 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
     """
     _ensure_minimal()
     assert _WEEKLY is not None
-    # find the matching weekly column for this key
+    # map key -> weekly column
     col = None
     for c, k in _METRIC_MAP.values():
         if k == metric_key:
@@ -252,37 +239,48 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
     return mu, sd, team, pos, n
 
 def _team_allowed_stat(team: str, metric_key: str) -> Tuple[float, float, int]:
+    """
+    Return (mu, sd, n_games) of what the team allows for a given metric.
+    FIX: compute **per-game totals** vs the team, then mean/sd across games.
+    """
     _ensure_minimal()
     assert _WEEKLY is not None
     df = _WEEKLY
 
+    # Points via TD proxy (already per-player; aggregate to per-game totals)
     if metric_key in ("points_for", "points"):
         pass_td = pd.to_numeric(df.get("passing_tds", 0), errors="coerce").fillna(0.0)
         rush_td = pd.to_numeric(df.get("rushing_tds", 0), errors="coerce").fillna(0.0)
-        points_for_proxy = 6.0 * (pass_td + rush_td)
         tmp = df.copy()
-        tmp["points_for_proxy"] = points_for_proxy
+        tmp["points_for_proxy"] = 6.0 * (pass_td + rush_td)
 
         if metric_key == "points_for":
-            g = tmp[tmp["recent_team"].astype(str).str.upper() == (team or "").upper()]
+            side = tmp[tmp["recent_team"].astype(str).str.upper() == (team or "").upper()]
+            per_game = side.groupby(["season", "week", "recent_team"])["points_for_proxy"].sum()
         else:
-            g = tmp[tmp["opponent_team"].astype(str).str.upper() == (team or "").upper()]
+            side = tmp[tmp["opponent_team"].astype(str).str.upper() == (team or "").upper()]
+            per_game = side.groupby(["season", "week", "recent_team"])["points_for_proxy"].sum()
 
-        tail = _last_n_non_null(g["points_for_proxy"], HISTORY_GAMES)
+        tail = _last_n_non_null(per_game, HISTORY_GAMES)
         n = len(tail)
         mu = float(tail.mean()) if n > 0 else 21.0
         sd = float(tail.std(ddof=0)) if n > 1 else 7.0
         return mu, sd, n
 
+    # Map metric -> weekly column to sum per game
     weekly_col = _TEAM_ALLOWED_KEYS.get(metric_key)
     if weekly_col is None:
         return 0.0, 0.0, 0
-
     if df.empty or weekly_col not in df.columns:
         return 0.0, 0.0, 0
 
-    g = df[df["opponent_team"].astype(str).str.upper() == (team or "").upper()]
-    tail = _last_n_non_null(g[weekly_col], HISTORY_GAMES)
+    # Defensive view: games where opponent_team == team
+    side = df[df["opponent_team"].astype(str).str.upper() == (team or "").upper()]
+    # Sum across all offensive players per game (season, week, recent_team)
+    per_game = pd.to_numeric(side[weekly_col], errors="coerce").fillna(0.0) \
+        .groupby([side["season"], side["week"], side["recent_team"]]).sum()
+
+    tail = _last_n_non_null(per_game, HISTORY_GAMES)
     n = len(tail)
     mu = float(tail.mean()) if n > 0 else 0.0
     sd = float(tail.std(ddof=0)) if n > 1 else 0.0
@@ -371,41 +369,6 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "snapshot": get_snapshot()
     }
 
-# -----------------------------
-# PUBLIC DEBUG HELPERS (for /debug endpoints)
-# -----------------------------
-def list_players(prefix: str = "", limit: int = 25) -> List[str]:
-    _ensure_minimal()
-    assert _WEEKLY is not None
-    names = _WEEKLY.get("player_name", pd.Series([], dtype=object)).dropna().astype(str).unique().tolist()
-    if prefix:
-        pfx = prefix.lower()
-        names = [n for n in names if n.lower().startswith(pfx)]
-    names.sort()
-    return names[:max(1, int(limit))]
-
-def list_teams() -> List[str]:
-    _ensure_minimal()
-    assert _WEEKLY is not None
-    rec = _WEEKLY.get("recent_team", pd.Series([], dtype=object)).dropna().astype(str).unique().tolist()
-    opp = _WEEKLY.get("opponent_team", pd.Series([], dtype=object)).dropna().astype(str).unique().tolist()
-    teams = sorted({*(t.upper() for t in rec), *(t.upper() for t in opp)})
-    return teams
-
-def list_metric_keys() -> List[str]:
-    keys = {v[1] for v in _METRIC_MAP.values()}
-    keys.update(["points_for", "points"])
-    return sorted(keys)
-
-def get_player_metric(player: str, metric_or_kind: str) -> Dict[str, Any]:
-    key = _resolve_metric_key(metric_or_kind)
-    mu, sd, team, pos, n = _player_stat(player, key)
-    return {"player": player, "metric_key": key, "mu": mu, "sd": sd, "team": team, "pos": pos, "n_games": n}
-
-def get_team_allowed(team: str, metric_or_kind: str) -> Dict[str, Any]:
-    key = _resolve_metric_key(metric_or_kind)
-    mu, sd, n = _team_allowed_stat(team, key)
-    return {"team": team.upper(), "metric_key": key, "mu": mu, "sd": sd, "n_games": n}
 
 
 
