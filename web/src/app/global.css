@@ -18,7 +18,7 @@ body { @apply bg-ink text-white; }
 .bg-ink { background: #0b1016; }
 .bg-panel { background: #0d131d; }
 
-/* Hero */
+/* Hero banner (keeps your existing content) */
 .hero {
   @apply relative overflow-hidden rounded-2xl border border-white/10;
   background-image: url('/assets/bg/bg-betting.png');
@@ -35,7 +35,7 @@ body { @apply bg-ink text-white; }
 .footer { @apply text-center text-xs text-white/50 py-8; }
 .footer a { @apply underline decoration-white/30 hover:decoration-white; }
 
-/* Pixel panels and menu items */
+/* Pixel main menu panel + items */
 .pixel-panel {
   position: relative;
   background-image: url('/assets/menu/main-menu-panel-filled-gutter.png');
@@ -58,4 +58,9 @@ body { @apply bg-ink text-white; }
 .menu-item:hover .bw, .menu-item:focus .bw { display: none; }
 .menu-item:hover .color, .menu-item:focus .color { display: block; }
 .menu-item span { margin-top: 8px; font-weight: 600; }
+
+/* Simple fade utility for overlays */
+.fade-in { animation: fadeIn 300ms ease-out both; }
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+
 
