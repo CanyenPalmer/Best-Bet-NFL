@@ -22,14 +22,14 @@ type AnyResult =
   | { singles: SingleResp[]; parlays: ParlayResp[] }
   | null;
 
-/* ---------- new: simple phase state for overlays ---------- */
-type Phase = "boot" | "landing" | "menu" | "section";
+/* ---------- overlay phases ---------- */
+type Phase = "boot" | "landing" | "home" | "menu" | "section";
 
 export default function Page() {
   const [phase, setPhase] = useState<Phase>("boot");
   const [bootProgress, setBootProgress] = useState(0);
 
-  /* Boot progress → landing → menu */
+  /* Boot progress → landing → home (start screen) */
   useEffect(() => {
     if (phase !== "boot") return;
     const total = 2250;
@@ -41,7 +41,7 @@ export default function Page() {
       setBootProgress(p);
       if (p >= 100) {
         setPhase("landing");
-        const id = setTimeout(() => setPhase("menu"), 600); // logo hold before menu
+        const id = setTimeout(() => setPhase("home"), 600); // logo hold before start screen
         return () => clearTimeout(id);
       } else {
         raf = requestAnimationFrame(tick);
@@ -116,19 +116,29 @@ export default function Page() {
     finally { setBusy(false); }
   }
 
-  // Safe cast for TS-only typing mismatch
+  // TS-safe implied prob from american_odds
   const impliedSingle = useMemo(
     () => impliedFromAmerican((((single as any).american_odds as number) ?? 0)),
     [ (single as any).american_odds ]
   );
 
+  /* ---------- dynamic background per view ---------- */
+  // For the main app content, change the hero bg based on which "section" user is viewing.
+  // single -> betting, batch -> stats, parlay -> settings
+  const heroBg =
+    tab === "single"
+      ? "/assets/bg/bg-betting.png"
+      : tab === "batch"
+      ? "/assets/bg/bg-stats.png"
+      : "/assets/bg/bg-settings.png";
+
   return (
     <>
-      {/* ---------- OVERLAYS: boot + landing + menu ---------- */}
+      {/* ---------- OVERLAYS: boot + landing + home + menu ---------- */}
       {phase !== "section" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center fade-in">
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center fade-in">
           {/* Backgrounds */}
-          {phase === "menu" ? (
+          {(phase === "menu" || phase === "home") ? (
             <div
               className="absolute inset-0 bg-cover bg-center"
               style={{ backgroundImage: "url(/assets/menu/main-menu-bg.png)" }}
@@ -137,16 +147,16 @@ export default function Page() {
             <div className="absolute inset-0 bg-[#0b1016]" />
           )}
 
-          {/* Logo (persists from boot through landing; shown above menu) */}
+          {/* Logo (always above primary CTA/options) */}
           <img
             src="/assets/pixel/logo/best-bet-nfl.png"
             alt="Best Bet NFL"
-            className="relative w-[280px] md:w-[360px] drop-shadow-xl"
+            className="relative w-[280px] md:w-[360px] drop-shadow-xl mb-6"
           />
 
           {/* Progress bar (boot only) */}
           {phase === "boot" && (
-            <div className="absolute bottom-[20%] w-[70%] max-w-xl">
+            <div className="relative w-[70%] max-w-xl mt-4">
               <div className="h-3 rounded-sm bg-white/10 border border-white/20">
                 <div className="h-full bg-white/80" style={{ width: `${bootProgress}%` }} />
               </div>
@@ -156,9 +166,25 @@ export default function Page() {
             </div>
           )}
 
-          {/* Main Menu — NO panel image; just a clean grid with your four widgets */}
+          {/* HOME (start screen) */}
+          {phase === "home" && (
+            <div className="relative w-[92%] max-w-xl mt-2">
+              <button
+                onClick={() => setPhase("menu")}
+                className="w-full px-6 py-4 rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 transition text-lg font-bold text-center"
+                aria-label="Start"
+              >
+                START
+              </button>
+              <div className="mt-3 text-center text-xs text-white/60">
+                Press START to enter the main menu
+              </div>
+            </div>
+          )}
+
+          {/* Main Menu (logo above, then options; Exit returns to home) */}
           {phase === "menu" && (
-            <div className="relative w-[92%] max-w-3xl mt-8">
+            <div className="relative w-[92%] max-w-3xl mt-2">
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 p-2">
                 {/* Place Bet — money bag */}
                 <button
@@ -170,7 +196,7 @@ export default function Page() {
                   <span>Place Bet</span>
                 </button>
 
-                {/* My Stats — bar graph (maps to Batch tab for now) */}
+                {/* My Stats — bar graph */}
                 <button
                   onClick={() => { setTab("batch"); setPhase("section"); }}
                   className="menu-item"
@@ -180,7 +206,7 @@ export default function Page() {
                   <span>My Stats</span>
                 </button>
 
-                {/* Settings — gear (maps to Parlay tab for now) */}
+                {/* Settings — gear */}
                 <button
                   onClick={() => { setTab("parlay"); setPhase("section"); }}
                   className="menu-item"
@@ -190,9 +216,9 @@ export default function Page() {
                   <span>Settings</span>
                 </button>
 
-                {/* Exit — exit stop (just closes overlay) */}
+                {/* Exit — exit stop → back to START */}
                 <button
-                  onClick={() => { setPhase("section"); }}
+                  onClick={() => { setPhase("home"); }}
                   className="menu-item"
                 >
                   <img src="/assets/icons/exit-stop-bw.png" className="bw" alt="" />
@@ -207,8 +233,25 @@ export default function Page() {
 
       {/* ---------- EXISTING APP CONTENT (engine untouched) ---------- */}
       <div className="min-h-screen">
-        {/* Header */}
-        <div className="hero">
+        {/* Always-available return to Main Menu when in a section */}
+        {phase === "section" && (
+          <div className="fixed top-3 left-3 z-40">
+            <button
+              onClick={() => setPhase("menu")}
+              className="btn"
+              aria-label="Return to Main Menu"
+              title="Main Menu"
+            >
+              Main Menu
+            </button>
+          </div>
+        )}
+
+        {/* Header with dynamic background per section */}
+        <div
+          className="hero"
+          style={phase === "section" ? { backgroundImage: `url('${heroBg}')` } : undefined}
+        >
           <div className="mx-auto max-w-6xl px-4 py-16">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -242,13 +285,13 @@ export default function Page() {
               <button className={`btn ${tab === "batch" ? "btn-primary" : ""}`} onClick={() => setTab("batch")}>Batch JSON</button>
             </div>
             <div className="mt-4 text-xs text-white/60">
-              Tip: New visitors see the pixel menu first, but you can switch views here.
+              Tip: Use the overlay menu (Start → Main Menu) or switch here anytime.
             </div>
           </div>
 
           {/* Panels */}
           <div className="md:col-span-2 grid gap-6">
-            {/* SINGLE */}
+            {/* SINGLE (betting) */}
             {tab === "single" && (
               <div className="card">
                 <div className="flex items-center justify-between mb-4">
@@ -322,7 +365,7 @@ export default function Page() {
               </div>
             )}
 
-            {/* PARLAY */}
+            {/* PARLAY (settings bg for now) */}
             {tab === "parlay" && (
               <div className="card">
                 <div className="flex items-center justify-between mb-4">
@@ -413,7 +456,7 @@ export default function Page() {
               </div>
             )}
 
-            {/* BATCH */}
+            {/* BATCH (stats bg) */}
             {tab === "batch" && (
               <div className="card">
                 <h2 className="text-lg font-semibold mb-4">Batch (JSON)</h2>
@@ -447,6 +490,7 @@ export default function Page() {
     </>
   );
 }
+
 
 
 
