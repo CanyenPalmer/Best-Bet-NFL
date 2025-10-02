@@ -18,7 +18,7 @@ TOTAL_SD = 18.0
 TEAM_SD = 7.0
 
 CURR_SEASON = int(os.getenv("SEASON", "2025"))
-SEASONS_BACK = int(os.getenv("SEASONS_BACK", "1"))  # adjust via env in Vercel if desired
+SEASONS_BACK = int(os.getenv("SEASONS_BACK", "3"))  # 2-3 seasons is a good default
 SEASONS = list(range(max(2009, CURR_SEASON - SEASONS_BACK + 1), CURR_SEASON + 1))
 
 # nflverse CSV weekly player stats (one file per season)
@@ -105,34 +105,99 @@ def _fetch_weekly_csv(year: int) -> pd.DataFrame:
     if cache.exists():
         return pd.read_csv(cache, low_memory=False)
     url = CSV_URL.format(year=year)
-    resp = requests.get(url, timeout=7)
+    resp = requests.get(url, timeout=10)
     resp.raise_for_status()
     cache.write_bytes(resp.content)
     return pd.read_csv(io.BytesIO(resp.content), low_memory=False)
+
+# ---- Column normalizer ------------------------------------
+def _first_col(df: pd.DataFrame, candidates: List[str]) -> Optional[str]:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+def _normalize_week_df(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize column names across seasons/sources to a common schema:
+      player_name, recent_team, opponent_team, position
+      completions, attempts, passing_yards, passing_tds,
+      rushing_yards, rushing_tds, receiving_yards, receptions, receiving_tds,
+      field_goals_made
+    """
+    df = df.copy()
+
+    # Core identity columns (stringified to avoid NaN masks later)
+    name_col = _first_col(df, ["player_name", "player_display_name", "name", "full_name"])
+    if name_col is None:
+        df["player_name"] = ""
+    else:
+        df["player_name"] = df[name_col].astype(str)
+
+    pos_col = _first_col(df, ["position", "pos"])
+    df["position"] = df[pos_col].astype(str) if pos_col else ""
+
+    # Teams
+    team_col = _first_col(df, ["recent_team", "recent_team_abbr", "team", "team_abbr", "posteam"])
+    opp_col  = _first_col(df, ["opponent_team", "opp_team", "opp", "defteam"])
+    df["recent_team"] = df[team_col].astype(str).str.upper() if team_col else ""
+    df["opponent_team"] = df[opp_col].astype(str).str.upper() if opp_col else ""
+
+    # Season/week (ensure exist)
+    if "season" not in df.columns:
+        df["season"] = pd.NA
+    if "week" not in df.columns:
+        df["week"] = pd.NA
+
+    # Numeric stat columns: pick the best available name then coerce to float
+    def numcol(out: str, cands: List[str]):
+        col = _first_col(df, cands)
+        if col is None:
+            df[out] = 0.0
+        else:
+            df[out] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+
+    numcol("completions",    ["completions", "pass_completions"])
+    numcol("attempts",       ["attempts", "pass_attempts"])
+    numcol("passing_yards",  ["passing_yards", "pass_yards", "yards_pass"])
+    numcol("passing_tds",    ["passing_tds", "pass_tds"])
+    numcol("rushing_yards",  ["rushing_yards", "rush_yards", "yards_rush"])
+    numcol("rushing_tds",    ["rushing_tds", "rush_tds"])
+    numcol("receiving_yards",["receiving_yards", "rec_yards", "yards_rec"])
+    numcol("receptions",     ["receptions", "rec"])
+    numcol("receiving_tds",  ["receiving_tds", "rec_tds"])
+    numcol("field_goals_made", ["field_goals_made", "fgm", "kicking_fg_made"])
+
+    # Final ordering (not strictly required)
+    keep = [
+        "season","week","player_name","recent_team","opponent_team","position",
+        "completions","attempts","passing_yards","passing_tds",
+        "rushing_yards","rushing_tds",
+        "receiving_yards","receptions","receiving_tds",
+        "field_goals_made"
+    ]
+    for k in keep:
+        if k not in df.columns:
+            df[k] = 0 if k not in ["season","week","player_name","recent_team","opponent_team","position"] else ""
+    return df[keep]
 
 def _load_weekly(seasons: List[int]) -> pd.DataFrame:
     frames = []
     for y in seasons:
         try:
-            frames.append(_fetch_weekly_csv(y))
+            raw = _fetch_weekly_csv(y)
+            frames.append(_normalize_week_df(raw))
         except Exception as e:
             print(f"[nfl_bet_engine] warn: failed loading {y}: {e}")
     if not frames:
-        cols = [
+        return pd.DataFrame(columns=[
             "season","week","player_name","recent_team","opponent_team","position",
             "completions","attempts","passing_yards","passing_tds",
             "rushing_yards","rushing_tds",
             "receiving_yards","receptions","receiving_tds",
             "field_goals_made"
-        ]
-        return pd.DataFrame(columns=cols)
+        ])
     df = pd.concat(frames, ignore_index=True)
-    must = ["season","week","player_name","recent_team","opponent_team","position"]
-    for c in must:
-        if c not in df.columns:
-            df[c] = pd.NA
-    if "field_goals_made" not in df.columns:
-        df["field_goals_made"] = 0
     return df
 
 def _init_empty_baselines():
@@ -221,13 +286,16 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
     mask = names_lower == target
     sub = df[mask]
     if sub.empty:
+        # tolerate suffixes like "II", "Jr.", middle initials, etc. via startswith
         starts = names_lower.str.startswith(target)
         sub = df[starts]
         if sub.empty:
             return _LEAGUE_MEAN.get(metric_key, 0.0), _LEAGUE_SD.get(metric_key, 0.0), None, None, 0
 
-    team = sub["recent_team"].dropna().iloc[-1] if not sub["recent_team"].dropna().empty else None
-    pos  = sub["position"].dropna().iloc[-1] if not sub["position"].dropna().empty else None
+    team = sub["recent_team"].dropna().astype(str).str.upper()
+    team = team.iloc[-1] if not team.empty else None
+    pos  = sub["position"].dropna().astype(str)
+    pos  = pos.iloc[-1] if not pos.empty else None
 
     tail = _last_n_non_null(sub[col], HISTORY_GAMES) if col in sub.columns else pd.Series([], dtype=float)
     n = len(tail)
@@ -241,13 +309,17 @@ def _player_stat(player: str, metric_key: str) -> Tuple[float, float, Optional[s
 def _team_allowed_stat(team: str, metric_key: str) -> Tuple[float, float, int]:
     """
     Return (mu, sd, n_games) of what the team allows for a given metric.
-    FIX: compute **per-game totals** vs the team, then mean/sd across games.
+    Compute **per-game totals** vs the team, then mean/sd across games.
     """
     _ensure_minimal()
     assert _WEEKLY is not None
     df = _WEEKLY
 
-    # Points via TD proxy (already per-player; aggregate to per-game totals)
+    tkey = (team or "").upper()
+    if not tkey:
+        return 0.0, 0.0, 0
+
+    # Points via TD proxy (aggregate per game)
     if metric_key in ("points_for", "points"):
         pass_td = pd.to_numeric(df.get("passing_tds", 0), errors="coerce").fillna(0.0)
         rush_td = pd.to_numeric(df.get("rushing_tds", 0), errors="coerce").fillna(0.0)
@@ -255,10 +327,10 @@ def _team_allowed_stat(team: str, metric_key: str) -> Tuple[float, float, int]:
         tmp["points_for_proxy"] = 6.0 * (pass_td + rush_td)
 
         if metric_key == "points_for":
-            side = tmp[tmp["recent_team"].astype(str).str.upper() == (team or "").upper()]
+            side = tmp[tmp["recent_team"].astype(str).str.upper() == tkey]
             per_game = side.groupby(["season", "week", "recent_team"])["points_for_proxy"].sum()
         else:
-            side = tmp[tmp["opponent_team"].astype(str).str.upper() == (team or "").upper()]
+            side = tmp[tmp["opponent_team"].astype(str).str.upper() == tkey]
             per_game = side.groupby(["season", "week", "recent_team"])["points_for_proxy"].sum()
 
         tail = _last_n_non_null(per_game, HISTORY_GAMES)
@@ -269,16 +341,17 @@ def _team_allowed_stat(team: str, metric_key: str) -> Tuple[float, float, int]:
 
     # Map metric -> weekly column to sum per game
     weekly_col = _TEAM_ALLOWED_KEYS.get(metric_key)
-    if weekly_col is None:
-        return 0.0, 0.0, 0
-    if df.empty or weekly_col not in df.columns:
+    if weekly_col is None or df.empty or weekly_col not in df.columns:
         return 0.0, 0.0, 0
 
     # Defensive view: games where opponent_team == team
-    side = df[df["opponent_team"].astype(str).str.upper() == (team or "").upper()]
+    side = df[df["opponent_team"].astype(str).str.upper() == tkey]
+    if side.empty:
+        return 0.0, 0.0, 0
+
     # Sum across all offensive players per game (season, week, recent_team)
-    per_game = pd.to_numeric(side[weekly_col], errors="coerce").fillna(0.0) \
-        .groupby([side["season"], side["week"], side["recent_team"]]).sum()
+    vals = pd.to_numeric(side[weekly_col], errors="coerce").fillna(0.0)
+    per_game = vals.groupby([side["season"], side["week"], side["recent_team"]]).sum()
 
     tail = _last_n_non_null(per_game, HISTORY_GAMES)
     n = len(tail)
@@ -307,7 +380,8 @@ def compute_prop_probability(player: str, opponent_team: str, kind: str,
     prior = 0.5  # neutral prior
 
     if p_games == 0 and (p_mu == 0.0 and p_sd == 0.0):
-        sd_used = max(10.0, o_sd)
+        # Player unknown -> lean on opponent allowed (still robust)
+        sd_used = max(25.0, o_sd if o_sd > 0 else 50.0)
         p_over = 1.0 - _norm_cdf(line, o_mu, sd_used)
         p = p_over if side == "over" else 1.0 - p_over
         return {"p_hit": float(p), "snapshot": get_snapshot(), "debug": {
@@ -368,6 +442,51 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
         "expected_points_against": float(exp_against),
         "snapshot": get_snapshot()
     }
+
+# -----------------------------
+# PUBLIC DEBUG HELPERS (for /debug endpoints)
+# -----------------------------
+def list_players(prefix: str = "", limit: int = 25) -> List[str]:
+    _ensure_minimal()
+    assert _WEEKLY is not None
+    names = _WEEKLY.get("player_name", pd.Series([], dtype=object)).dropna().astype(str).unique().tolist()
+    if prefix:
+        pfx = prefix.lower()
+        names = [n for n in names if n.lower().startswith(pfx)]
+    names.sort()
+    return names[:max(1, int(limit))]
+
+def list_teams() -> List[str]:
+    _ensure_minimal()
+    assert _WEEKLY is not None
+    rec = _WEEKLY.get("recent_team", pd.Series([], dtype=object)).dropna().astype(str).unique().tolist()
+    opp = _WEEKLY.get("opponent_team", pd.Series([], dtype=object)).dropna().astype(str).unique().tolist()
+    teams = sorted({*(t.upper() for t in rec), *(t.upper() for t in opp)})
+    return teams
+
+def list_metric_keys() -> List[str]:
+    keys = {v[1] for v in _METRIC_MAP.values()}
+    keys.update(["points_for", "points"])
+    return sorted(keys)
+
+def get_player_metric(player: str, metric_or_kind: str) -> Dict[str, Any]:
+    # resolve kind->key if needed
+    kk = metric_or_kind.strip().lower()
+    if kk in _METRIC_MAP:
+        key = _METRIC_MAP[kk][1]
+    else:
+        key = kk
+    mu, sd, team, pos, n = _player_stat(player, key)
+    return {"player": player, "metric_key": key, "mu": mu, "sd": sd, "team": team, "pos": pos, "n_games": n}
+
+def get_team_allowed(team: str, metric_or_kind: str) -> Dict[str, Any]:
+    kk = metric_or_kind.strip().lower()
+    if kk in _METRIC_MAP:
+        key = _METRIC_MAP[kk][1]
+    else:
+        key = kk
+    mu, sd, n = _team_allowed_stat(team, key)
+    return {"team": team.upper(), "metric_key": key, "mu": mu, "sd": sd, "n_games": n}
 
 
 
