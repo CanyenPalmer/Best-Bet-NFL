@@ -53,7 +53,7 @@ export default function Page() {
 
   /* -------- existing app state (engine untouched) -------- */
 
-  // FIX 1: functional initializer + cast to satisfy TS without changing runtime fields
+  // Functional initializer + cast to satisfy TS without changing runtime fields
   const [single, setSingle] = useState<SingleReq>(() => ({
     home_team: "PIT",
     away_team: "BAL",
@@ -62,7 +62,7 @@ export default function Page() {
     american_odds: -120,
   } as unknown as SingleReq));
 
-  // FIX 2: same approach for parlay initializer
+  // Same approach for parlay initializer
   const [parlay, setParlay] = useState<ParlayReq>(() => ({
     legs: [
       { home_team: "KC", away_team: "CIN", market: "moneyline", pick: "home", american_odds: -135 },
@@ -116,9 +116,10 @@ export default function Page() {
     finally { setBusy(false); }
   }
 
+  // FIX: reference american_odds via a safe cast so TS doesn't complain
   const impliedSingle = useMemo(
-    () => impliedFromAmerican(single.american_odds as unknown as number),
-    [single.american_odds]
+    () => impliedFromAmerican((((single as any).american_odds as number) ?? 0)),
+    [ (single as any).american_odds ]
   );
 
   return (
@@ -195,7 +196,7 @@ export default function Page() {
       <div className="min-h-screen">
         {/* Header */}
         <div className="hero">
-          <div className="mx-auto max-w-6xl px-4 py-16">
+          <div className="mx-auto max-w-6xl px_4 py-16">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <img
@@ -241,7 +242,7 @@ export default function Page() {
                   <h2 className="text-lg font-semibold">Single Bet</h2>
                   <div className="text-white/60 text-sm flex items-center gap-2">
                     <Percent size={16}/>
-                    Implied: {pct(impliedFromAmerican(single.american_odds as unknown as number))}
+                    Implied: {pct(impliedSingle)}
                   </div>
                 </div>
 
@@ -433,6 +434,7 @@ export default function Page() {
     </>
   );
 }
+
 
 
 
