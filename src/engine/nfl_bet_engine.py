@@ -678,7 +678,10 @@ def compute_moneyline(team: str, opponent: str) -> Dict[str, Any]:
     exp_for = 0.7 * pf_mu + 0.3 * pa_mu
     exp_against = 0.7 * pf_mu_opp + 0.3 * pa_mu_team
 
-    p_win = 1.0 - _norm_cdf(0.0, exp_against - exp_for, SCORE_DIFF_SD)
+    # FIX: use (exp_for - exp_against) as the mean of the scoring margin.
+    # p_win = P(margin > 0) = 1 - CDF(0; mu=exp_for - exp_against, sd=SCORE_DIFF_SD)
+    p_win = 1.0 - _norm_cdf(0.0, exp_for - exp_against, SCORE_DIFF_SD)
+
     return {
         "p_win": max(0.0, min(1.0, float(p_win))),
         "expected_points_for": float(exp_for),
@@ -747,6 +750,7 @@ def kind_to_metric_key(kind: str) -> str:
     if k not in _METRIC_MAP:
         raise ValueError(f"Unknown prop kind: {kind}")
     return _METRIC_MAP[k][1]
+
 
 
 
