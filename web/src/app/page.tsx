@@ -1,20 +1,26 @@
 "use client";
 
 import { useEffect, useMemo, useState, useRef } from "react";
-import { api, SingleReq, ParlayReq, ParlayResp, SingleResp, suggest } from "@/lib/api";
+import { api, SingleReq, ParlayReq, ParlayResp, SingleResp } from "@/lib/api";
 import { RefreshCw, Percent, Info, TrendingUp, ArrowLeft, ChevronDown, ChevronRight, X } from "lucide-react";
 
-/* ---------- Global select/option visibility fix (minimal & safe) ---------- */
+/* ---------- Global select/option visibility fix (match .input styling) ---------- */
 const GlobalSelectStyle = () => (
   <style jsx global>{`
-    select, option {
+    /* Keep selects readable across browsers and match your .input look */
+    select.input, select {
       color: #fff !important;
-      background: rgba(0,0,0,0.9) !important;
+      background-color: rgba(255,255,255,0.06) !important; /* similar to bg-white/5 */
+      border-color: rgba(255,255,255,0.1) !important;
     }
-    /* keep focus ring visible */
     select:focus {
-      outline: 2px solid rgba(255,255,255,0.15);
+      outline: 2px solid rgba(255,255,255,0.18);
       outline-offset: 2px;
+    }
+    /* Options inherit readable colors; avoid “invisible until hover” issue */
+    option {
+      color: #fff !important;
+      background-color: rgba(17, 24, 39, 0.95) !important; /* slate-900-ish dropdown sheet */
     }
   `}</style>
 );
@@ -58,6 +64,32 @@ const PROP_KIND_BY_LABEL: Record<string, string> = {
 } as const;
 const PLAYER_METRICS = Object.keys(PROP_KIND_BY_LABEL) as (keyof typeof PROP_KIND_BY_LABEL)[];
 
+/* ---------------- Suggestion helpers (call backend directly) ---------------- */
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE ?? "").replace(/\/+$/, "");
+
+async function getJSON<T>(path: string): Promise<T> {
+  if (!API_BASE) throw new Error("NEXT_PUBLIC_API_BASE is not set");
+  const url = `${API_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
+  const res = await fetch(url, { method: "GET" });
+  if (!res.ok) throw new Error(`GET ${path} ${res.status}`);
+  return (await res.json()) as T;
+}
+
+async function fetchPlayerSuggestions(seed: string, limit = 200): Promise<string[]> {
+  // Ask server for a prefix list (first char) to keep it light;
+  // then do substring filter & A–Z sort on the client.
+  const prefix = (seed || "").slice(0, 1);
+  const data = await getJSON<{ players: string[] }>(`/lists/players?prefix=${encodeURIComponent(prefix)}&limit=${limit}`);
+  return Array.isArray(data.players) ? data.players : [];
+}
+
+async function fetchTeamSuggestions(seed: string, limit = 64): Promise<string[]> {
+  const prefix = (seed || "").slice(0, 1).toUpperCase();
+  const data = await getJSON<{ teams: string[] }>(`/lists/teams?prefix=${encodeURIComponent(prefix)}&limit=${limit}`);
+  return Array.isArray(data.teams) ? data.teams : [];
+}
+
 /* ---------------- Small autocomplete widget ---------------- */
 type AutoSuggestProps = {
   value: string;
@@ -100,10 +132,9 @@ function AutoSuggest({ value, onChange, placeholder, fetcher, maxResults = 30 }:
     setLoading(true);
     const t = setTimeout(async () => {
       try {
-        // We request with the first char (or empty) to keep traffic light,
-        // then do substring filtering client-side to satisfy "contains".
-        const seed = q.slice(0, 1);
-        const base = await fetcher(seed);
+        // Request with first char to reduce server work;
+        // then substring filter & A–Z sort client-side.
+        const base = await fetcher(q.slice(0, 1));
         const lower = q.toLowerCase();
         const filtered = base
           .filter((s) => s && s.toLowerCase().includes(lower))
@@ -154,7 +185,7 @@ function AutoSuggest({ value, onChange, placeholder, fetcher, maxResults = 30 }:
         )}
       </div>
       {open && (
-        <div className="absolute z-40 mt-1 w-full max-h-64 overflow-auto rounded-xl border border-white/10 bg-black/90 shadow-lg">
+        <div className="absolute z-40 mt-1 w-full max-h-64 overflow-auto rounded-xl border border-white/10 bg-[rgba(17,24,39,0.95)] shadow-lg">
           {loading && (
             <div className="px-3 py-2 text-xs text-white/60">Searching…</div>
           )}
@@ -390,13 +421,11 @@ export default function Page() {
 
   /* ---------- Suggestions fetchers ---------- */
   const fetchPlayers = async (_seed: string) => {
-    // ask backend for players (seed char) and filter substring locally
-    const list = await suggest.players(_seed || "", 200);
+    const list = await fetchPlayerSuggestions(_seed || "", 300);
     return list;
   };
   const fetchTeams = async (_seed: string) => {
-    // backend already returns abbreviations; we’ll still return and filter locally
-    const list = await suggest.teams(_seed || "", 64);
+    const list = await fetchTeamSuggestions(_seed || "", 64);
     return list;
   };
 
@@ -1423,6 +1452,7 @@ export default function Page() {
     </>
   );
 }
+
 
 
 
