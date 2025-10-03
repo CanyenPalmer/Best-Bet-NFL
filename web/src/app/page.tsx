@@ -1,8 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { api, SingleReq, ParlayReq, ParlayResp, SingleResp } from "@/lib/api";
-import { RefreshCw, Percent, Info, TrendingUp, ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState, useRef } from "react";
+import { api, SingleReq, ParlayReq, ParlayResp, SingleResp, suggest } from "@/lib/api";
+import { RefreshCw, Percent, Info, TrendingUp, ArrowLeft, ChevronDown, ChevronRight, X } from "lucide-react";
+
+/* ---------- Global select/option visibility fix (minimal & safe) ---------- */
+const GlobalSelectStyle = () => (
+  <style jsx global>{`
+    select, option {
+      color: #fff !important;
+      background: rgba(0,0,0,0.9) !important;
+    }
+    /* keep focus ring visible */
+    select:focus {
+      outline: 2px solid rgba(255,255,255,0.15);
+      outline-offset: 2px;
+    }
+  `}</style>
+);
 
 /* ---------------- Helpers ---------------- */
 function impliedFromAmerican(odds: number): number {
@@ -43,20 +58,128 @@ const PROP_KIND_BY_LABEL: Record<string, string> = {
 } as const;
 const PLAYER_METRICS = Object.keys(PROP_KIND_BY_LABEL) as (keyof typeof PROP_KIND_BY_LABEL)[];
 
-/* ---------------- Debounce (added) ---------------- */
-function useDebounce<T>(value: T, delay = 160) {
-  const [v, setV] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setV(value), delay);
-    return () => clearTimeout(t);
-  }, [value, delay]);
-  return v;
-}
+/* ---------------- Small autocomplete widget ---------------- */
+type AutoSuggestProps = {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder?: string;
+  /** fetch base list; we will client-filter for substring and sort A–Z */
+  fetcher: (q: string) => Promise<string[]>;
+  /** optional: cap results for UI */
+  maxResults?: number;
+};
 
-/* ---------------- API base for suggestions (added) ---------------- */
-const API_BASE =
-  (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_API_BASE) ||
-  "http://localhost:8000";
+function AutoSuggest({ value, onChange, placeholder, fetcher, maxResults = 30 }: AutoSuggestProps) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Close on outside click
+  useEffect(() => {
+    function onDoc(e: MouseEvent) {
+      if (!boxRef.current) return;
+      if (!boxRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  // Debounced fetch + client-side substring filter
+  useEffect(() => {
+    let alive = true;
+    const q = (value ?? "").trim();
+    if (!q) {
+      setItems([]);
+      setOpen(false);
+      return;
+    }
+    setLoading(true);
+    const t = setTimeout(async () => {
+      try {
+        // We request with the first char (or empty) to keep traffic light,
+        // then do substring filtering client-side to satisfy "contains".
+        const seed = q.slice(0, 1);
+        const base = await fetcher(seed);
+        const lower = q.toLowerCase();
+        const filtered = base
+          .filter((s) => s && s.toLowerCase().includes(lower))
+          .sort((a, b) => a.localeCompare(b))
+          .slice(0, maxResults);
+        if (!alive) return;
+        setItems(filtered);
+        setOpen(filtered.length > 0);
+      } catch {
+        if (!alive) return;
+        setItems([]);
+        setOpen(false);
+      } finally {
+        if (alive) setLoading(false);
+      }
+    }, 150);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [value, fetcher, maxResults]);
+
+  return (
+    <div className="relative" ref={boxRef}>
+      <div className="flex gap-2">
+        <input
+          ref={inputRef}
+          className="input flex-1"
+          value={value}
+          placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={() => {
+            if (items.length > 0) setOpen(true);
+          }}
+        />
+        {value && (
+          <button
+            className="btn btn-secondary"
+            type="button"
+            onClick={() => {
+              onChange("");
+              inputRef.current?.focus();
+            }}
+            title="Clear"
+          >
+            <X size={14} />
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="absolute z-40 mt-1 w-full max-h-64 overflow-auto rounded-xl border border-white/10 bg-black/90 shadow-lg">
+          {loading && (
+            <div className="px-3 py-2 text-xs text-white/60">Searching…</div>
+          )}
+          {!loading && items.length === 0 && (
+            <div className="px-3 py-2 text-xs text-white/60">No matches</div>
+          )}
+          {!loading &&
+            items.map((s) => (
+              <button
+                key={s}
+                type="button"
+                className="w-full text-left px-3 py-2 hover:bg-white/10"
+                onClick={() => {
+                  onChange(s);
+                  setOpen(false);
+                }}
+              >
+                {s}
+              </button>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /* ---------------- Generic Dialogue Box (sprite + prompt) ---------------- */
 function DialogueBox({
@@ -71,7 +194,7 @@ function DialogueBox({
   large?: boolean;
 }) {
   return (
-    <div className={`w-full ${large ? "bg-black/70" : "bg-black/60"} rounded-2xl p-4 md:p-5 border border-white/10 flex gap-4 items-center text-white`}>
+    <div className={`w-full ${large ? "bg-black/70" : "bg-black/60"} rounded-2xl p-4 md:p-5 border border-white/10 flex gap-4 items-center`}>
       <div className={`${large ? "w-20 h-20" : "w-14 h-14"} rounded-xl overflow-hidden bg-black/40 border border-white/10 shrink-0 flex items-center justify-center`}>
         <img
           src={spriteSrc}
@@ -123,11 +246,11 @@ function DialogueSummary({ result }: { result: AnyResult }) {
     }
     if (pc > 0) {
       const p0 = b.parlays[0];
-      const p = tryField(p0, ["probability", "p_win", "combined_probability"]);
+      const p = tryField(p0, ["probability", "p_win", "combined_probability", "parlay_probability_independent"]);
       lines.push(`Example parlay → True odds: ${pct01(p)}`);
     }
   } else if (isParlay(result)) {
-    const p = tryField(result as any, ["probability", "p_win", "combined_probability"]);
+    const p = tryField(result as any, ["probability", "p_win", "combined_probability", "parlay_probability_independent"]);
     const payout = tryField(result as any, ["payout", "payout_if_win"]);
     const ev = tryField(result as any, ["ev", "expected_value"]);
     const legCount = Array.isArray((result as any).legs)
@@ -265,57 +388,17 @@ export default function Page() {
   const [err, setErr] = useState<string | null>(null);
   const [showResultDetails, setShowResultDetails] = useState<boolean>(false);
 
-  /* ---------- SUGGESTIONS (added) ---------- */
-  const [playerSuggest, setPlayerSuggest] = useState<string[]>([]);
-  const [teamSuggest, setTeamSuggest] = useState<string[]>([]);
-  const debPlayer = useDebounce(playerName, 160);
-  const debOpp = useDebounce(playerOpponent, 160);
-  const homeTeam = (single as any).home_team ?? "";
-  const awayTeam = (single as any).away_team ?? "";
-  const debHome = useDebounce(homeTeam, 160);
-  const debAway = useDebounce(awayTeam, 160);
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      const q = (debPlayer || "").trim();
-      if (!q) {
-        if (alive) setPlayerSuggest([]);
-        return;
-      }
-      try {
-        const res = await fetch(`${API_BASE}/lists/players?prefix=${encodeURIComponent(q)}&limit=50`);
-        const json = await res.json();
-        if (alive) setPlayerSuggest(Array.isArray(json.players) ? json.players : []);
-      } catch {
-        if (alive) setPlayerSuggest([]);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [debPlayer]);
-
-  useEffect(() => {
-    let alive = true;
-    const q = (debOpp || debHome || debAway || "").trim();
-    if (!q) {
-      setTeamSuggest([]);
-      return () => { alive = false; };
-    }
-    (async () => {
-      try {
-        const res = await fetch(`${API_BASE}/lists/teams?prefix=${encodeURIComponent(q)}&limit=50`);
-        const json = await res.json();
-        if (alive) setTeamSuggest(Array.isArray(json.teams) ? json.teams : []);
-      } catch {
-        if (alive) setTeamSuggest([]);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [debOpp, debHome, debAway]);
+  /* ---------- Suggestions fetchers ---------- */
+  const fetchPlayers = async (_seed: string) => {
+    // ask backend for players (seed char) and filter substring locally
+    const list = await suggest.players(_seed || "", 200);
+    return list;
+  };
+  const fetchTeams = async (_seed: string) => {
+    // backend already returns abbreviations; we’ll still return and filter locally
+    const list = await suggest.teams(_seed || "", 64);
+    return list;
+  };
 
   /* ---------- Actions ---------- */
   async function doSingle() {
@@ -364,12 +447,10 @@ export default function Page() {
   }
 
   function toParlayPayload(legs: UILeg[], stake: number): ParlayReq {
-    // Build mixed-leg payload for backend: team legs as moneyline/spread; player legs as market: "prop"
     const builtLegs = legs.map((leg: UILeg) => {
       if (leg.leg_type === "team") {
         const t = leg as UILeg & { leg_type: "team" };
         if (t.market === "moneyline") {
-          // send team/opponent using pick
           const home = String(t.home_team || "");
           const away = String(t.away_team || "");
           const team = t.pick === "home" ? home : away;
@@ -496,7 +577,6 @@ export default function Page() {
     if (k === "stats") setPhase("stats");
     if (k === "settings") setPhase("settings");
     if (k === "exit") {
-      // Exit returns to START menu (not main)
       setResult(null);
       setErr(null);
       setTab("single");
@@ -515,11 +595,12 @@ export default function Page() {
   /* ---------- RENDER ---------- */
   return (
     <>
+      <GlobalSelectStyle />
+
       {/* BOOT */}
       {phase === "boot" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
           <div className="text-center">
-            {/* BIGGER LOGO above progress bar */}
             <div className="mx-auto w-56 h-56 mb-5 flex items-center justify-center">
               <img
                 src="/assets/pixel/logo/best-bet-nfl.png"
@@ -555,7 +636,7 @@ export default function Page() {
         </div>
       )}
 
-      {/* MAIN MENU with 4 sprites */}
+      {/* MAIN MENU */}
       {phase === "main" && (
         <div
           className="min-h-screen relative flex items-center justify-center bg-cover bg-center"
@@ -564,7 +645,6 @@ export default function Page() {
           <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.35),rgba(0,0,0,0.85))]" />
 
           <div className="relative container mx-auto px-4 py-10">
-            {/* Best Bet logo above options */}
             <div className="mx-auto w-40 h-40 mb-4 flex items-center justify-center">
               <img
                 src="/assets/pixel/logo/best-bet-nfl.png"
@@ -610,7 +690,6 @@ export default function Page() {
               })}
             </div>
 
-            {/* Dialogue box below sprites with matching prompt & colored sprite */}
             <div className="mt-6 max-w-3xl mx-auto">
               {(() => {
                 const k = hoverKey ?? focusKey ?? ("place" as MenuKey);
@@ -628,7 +707,7 @@ export default function Page() {
         </div>
       )}
 
-      {/* PLACE BET AREA (tabs) */}
+      {/* PLACE BET AREA */}
       {phase === "placebet" && (
         <div className="min-h-screen">
           {/* Header */}
@@ -677,7 +756,7 @@ export default function Page() {
               </div>
             </div>
 
-            {/* Right panels (exclusive) */}
+            {/* Right panels */}
             <div className="md:col-span-2 grid gap-6">
               {/* SINGLE */}
               {tab === "single" && (
@@ -716,20 +795,20 @@ export default function Page() {
                     <div className="grid md:grid-cols-2 gap-4">
                       <div className="grid gap-2">
                         <label className="label">Home Team</label>
-                        <input
-                          className="input"
-                          list="teams-list"
+                        <AutoSuggest
                           value={(single as any).home_team ?? ""}
-                          onChange={(e) => setSingle({ ...(single as any), home_team: e.target.value } as any)}
+                          onChange={(v) => setSingle({ ...(single as any), home_team: v } as any)}
+                          placeholder="e.g. KC"
+                          fetcher={fetchTeams}
                         />
                       </div>
                       <div className="grid gap-2">
                         <label className="label">Away Team</label>
-                        <input
-                          className="input"
-                          list="teams-list"
+                        <AutoSuggest
                           value={(single as any).away_team ?? ""}
-                          onChange={(e) => setSingle({ ...(single as any), away_team: e.target.value } as any)}
+                          onChange={(v) => setSingle({ ...(single as any), away_team: v } as any)}
+                          placeholder="e.g. CIN"
+                          fetcher={fetchTeams}
                         />
                       </div>
 
@@ -796,11 +875,11 @@ export default function Page() {
                     <div className="grid md:grid-cols-2 gap-4">
                       <div className="grid gap-2">
                         <label className="label">Player</label>
-                        <input
-                          className="input"
-                          list="players-list"
+                        <AutoSuggest
                           value={playerName}
-                          onChange={(e) => setPlayerName(e.target.value)}
+                          onChange={setPlayerName}
+                          placeholder="Type player (e.g. Pat...)"
+                          fetcher={fetchPlayers}
                         />
                       </div>
 
@@ -841,11 +920,11 @@ export default function Page() {
 
                       <div className="grid gap-2">
                         <label className="label">Opponent (abbr)</label>
-                        <input
-                          className="input"
-                          list="teams-list"
+                        <AutoSuggest
                           value={playerOpponent}
-                          onChange={(e) => setPlayerOpponent(e.target.value)}
+                          onChange={setPlayerOpponent}
+                          placeholder="e.g. BUF"
+                          fetcher={fetchTeams}
                         />
                       </div>
 
@@ -912,8 +991,8 @@ export default function Page() {
                               });
                             }}
                           >
-                            <option value="team">Team</option>
-                            <option value="player">Player</option>
+                            <option value="team">team</option>
+                            <option value="player">player</option>
                           </select>
                         </div>
 
@@ -922,12 +1001,9 @@ export default function Page() {
                           <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
                             <div>
                               <label className="label">Home</label>
-                              <input
-                                className="input"
-                                list="teams-list"
+                              <AutoSuggest
                                 value={(leg as any).home_team ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value;
+                                onChange={(v) => {
                                   setParlay((p: any) => {
                                     const next = { ...p };
                                     const copy = [...parlayLegs];
@@ -936,16 +1012,15 @@ export default function Page() {
                                     return next;
                                   });
                                 }}
+                                placeholder="e.g. NYJ"
+                                fetcher={fetchTeams}
                               />
                             </div>
                             <div>
                               <label className="label">Away</label>
-                              <input
-                                className="input"
-                                list="teams-list"
+                              <AutoSuggest
                                 value={(leg as any).away_team ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value;
+                                onChange={(v) => {
                                   setParlay((p: any) => {
                                     const next = { ...p };
                                     const copy = [...parlayLegs];
@@ -954,6 +1029,8 @@ export default function Page() {
                                     return next;
                                   });
                                 }}
+                                placeholder="e.g. BUF"
+                                fetcher={fetchTeams}
                               />
                             </div>
                             <div>
@@ -1042,12 +1119,9 @@ export default function Page() {
                           <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
                             <div className="md:col-span-2">
                               <label className="label">Player</label>
-                              <input
-                                className="input"
-                                list="players-list"
+                              <AutoSuggest
                                 value={(leg as any).player ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value;
+                                onChange={(v) => {
                                   setParlay((p: any) => {
                                     const next = { ...p };
                                     const copy = [...parlayLegs];
@@ -1056,6 +1130,8 @@ export default function Page() {
                                     return next;
                                   });
                                 }}
+                                placeholder="Type player"
+                                fetcher={fetchPlayers}
                               />
                             </div>
                             <div>
@@ -1119,12 +1195,9 @@ export default function Page() {
                             </div>
                             <div>
                               <label className="label">Opponent (abbr)</label>
-                              <input
-                                className="input"
-                                list="teams-list"
+                              <AutoSuggest
                                 value={(leg as any).opponent ?? ""}
-                                onChange={(e) => {
-                                  const v = e.target.value;
+                                onChange={(v) => {
                                   setParlay((p: any) => {
                                     const next = { ...p };
                                     const copy = [...parlayLegs];
@@ -1133,6 +1206,8 @@ export default function Page() {
                                     return next;
                                   });
                                 }}
+                                placeholder="e.g. GB"
+                                fetcher={fetchTeams}
                               />
                             </div>
                             <div>
@@ -1259,7 +1334,7 @@ export default function Page() {
                 </div>
               )}
 
-              {/* DIALOGUE SUMMARY (above results; appears when result exists) */}
+              {/* DIALOGUE SUMMARY */}
               {result && <DialogueSummary result={result} />}
 
               {/* Collapsible RESULTS */}
@@ -1290,7 +1365,7 @@ export default function Page() {
         </div>
       )}
 
-      {/* MY STATS (stub screen) */}
+      {/* MY STATS */}
       {phase === "stats" && (
         <div
           className="min-h-screen relative flex items-end bg-cover bg-center"
@@ -1345,18 +1420,6 @@ export default function Page() {
           </div>
         </div>
       )}
-
-      {/* DATALISTS (added) */}
-      <datalist id="players-list">
-        {playerSuggest.map((p) => (
-          <option key={p} value={p} />
-        ))}
-      </datalist>
-      <datalist id="teams-list">
-        {teamSuggest.map((t) => (
-          <option key={t} value={t} />
-        ))}
-      </datalist>
     </>
   );
 }
