@@ -76,6 +76,47 @@ export const api = {
   },
 };
 
+/* ---------------- Suggestions (added) ----------------
+   These map to new GET routes on your backend:
+   - /lists/players?prefix=...
+   - /lists/teams?prefix=...
+   - /lists/prop-kinds
+   Safe additions that do not affect existing calls.
+*/
+export const suggest = {
+  async players(prefix: string, limit: number = 50): Promise<string[]> {
+    if (!API_BASE) return [];
+    const url = `${API_BASE}/lists/players?prefix=${encodeURIComponent(
+      prefix ?? ""
+    )}&limit=${limit}`;
+    const res = await fetch(url, { method: "GET" });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json?.players) ? json.players : [];
+  },
+
+  async teams(prefix: string, limit: number = 50): Promise<string[]> {
+    if (!API_BASE) return [];
+    const url = `${API_BASE}/lists/teams?prefix=${encodeURIComponent(
+      prefix ?? ""
+    )}&limit=${limit}`;
+    const res = await fetch(url, { method: "GET" });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json?.teams) ? json.teams : [];
+  },
+
+  async propKinds(): Promise<string[]> {
+    if (!API_BASE) return [];
+    const url = `${API_BASE}/lists/prop-kinds`;
+    const res = await fetch(url, { method: "GET" });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json?.prop_kinds) ? json.prop_kinds : [];
+  },
+};
+
+
 
 
 
