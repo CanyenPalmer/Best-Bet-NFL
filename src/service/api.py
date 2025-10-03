@@ -142,4 +142,34 @@ def evaluate_batch(req: BatchReq) -> BatchResp:
     parlays = [evaluate_parlay(p) for p in req.get("parlays", [])]
     return {"singles": singles, "parlays": parlays}
 
+# --- suggestions (added) ---
+def list_players(prefix: str = "", limit: int = 50) -> Dict[str, Any]:
+    try:
+        players = engine.list_players(prefix=prefix, limit=limit)
+        return {"players": players}
+    except Exception as e:
+        return {"players": [], "error": str(e)}
+
+def list_teams(prefix: str = "", limit: int = 50) -> Dict[str, Any]:
+    try:
+        teams = engine.list_teams()
+        if prefix:
+            p = prefix.strip().upper()
+            teams = [t for t in teams if t.startswith(p)]
+        return {"teams": teams[:limit]}
+    except Exception as e:
+        return {"teams": [], "error": str(e)}
+
+def list_prop_kinds() -> Dict[str, Any]:
+    try:
+        kinds = (
+            engine.list_prop_kinds()
+            if hasattr(engine, "list_prop_kinds")
+            else sorted(list(engine._METRIC_MAP.keys()))
+        )
+        return {"prop_kinds": kinds}
+    except Exception as e:
+        return {"prop_kinds": [], "error": str(e)}
+
+
 
