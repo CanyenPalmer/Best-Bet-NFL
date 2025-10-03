@@ -69,8 +69,7 @@ export default function Page() {
     return () => cancelAnimationFrame(raf);
   }, [phase]);
 
-  /* -------- state (engine untouched) -------- */
-
+  /* ---------- Single bet UI state ---------- */
   // Place Bet: Team vs Team UI
   const [single, setSingle] = useState<SingleReq>(() => ({
     home_team: "PIT",
@@ -123,7 +122,7 @@ export default function Page() {
     return Number.isFinite(x) ? x : fallback;
   }
 
-  // Submit Single (team or player), translating UI → backend contract
+  /* ---------- actions ---------- */
   async function doSingle() {
     try {
       setBusy(true);
@@ -160,24 +159,22 @@ export default function Page() {
                 odds_format: "american",
               };
 
-        const r = await api.single(payload as SingleReq);
+        const r = await api.single(payload);
         setResult(r);
       } else {
-        // Player prop
-        const prop_kind = PROP_KIND_BY_LABEL[playerMetric];
-        const payload: any = {
+        // Player prop → backend "prop" payload
+        const payload = {
           market: "prop",
           player: playerName,
-          opponent_team: playerOpponent,
-          prop_kind,
-          side: playerOverUnder,      // "over" | "under"
+          prop_kind: PROP_KIND_BY_LABEL[playerMetric],
+          side: playerOverUnder, // "over" | "under"
           line: Number(playerLine),
+          opponent: playerOpponent,
           odds: Number(playerOdds),
           stake: Number(playerStake),
-          odds_format: "american",
         };
-        const r = await api.single(payload as SingleReq);
-        setResult(r);
+        const r = await api.single(payload as any);
+        setResult(r as AnyResult);
       }
     } catch (e: any) {
       setErr(e?.message ?? "Request failed");
@@ -186,53 +183,11 @@ export default function Page() {
     }
   }
 
-  // Submit Parlay (translate each leg)
   async function doParlay() {
     try {
       setBusy(true);
       setErr(null);
-
-      const ui: any = parlay;
-      const legs = (ui.legs || []).map((leg: any) => {
-        const pick = String(leg.pick);
-        const home = String(leg.home_team || "");
-        const away = String(leg.away_team || "");
-        const team = pick === "home" ? home : away;
-        const opponent = pick === "home" ? away : home;
-
-        if (leg.market === "moneyline") {
-          return {
-            market: "moneyline",
-            team,
-            opponent,
-            odds: Number(leg.american_odds ?? 0),
-            odds_format: "american",
-          };
-        } else if (leg.market === "spread") {
-          return {
-            market: "spread",
-            team,
-            opponent,
-            spread_line: Number(leg.line ?? 0),
-            odds: Number(leg.american_odds ?? 0),
-            odds_format: "american",
-          };
-        } else {
-          return {
-            market: "moneyline",
-            team,
-            opponent,
-            odds: Number(leg.american_odds ?? 0),
-            odds_format: "american",
-          };
-        }
-      });
-
-      const payload = {
-        stake: Number(ui.stake ?? 10),
-        legs,
-      };
-
+      const payload: ParlayReq = parlay;
       const r = await api.parlay(payload as ParlayReq);
       setResult(r);
     } catch (e: any) {
@@ -282,224 +237,475 @@ export default function Page() {
       ? "/assets/bg/bg-stats.png"
       : "/assets/bg/bg-settings.png";
 
-  /* ---------- overlays (keep your latest working overlay UI) ---------- */
-  // (Use your current overlays with Start screen, colored menu buttons, etc.)
-
   return (
     <>
-      {/* ... your existing overlays (boot, home, menu) unchanged ... */}
-
-      <div className="min-h-screen">
-        {/* Header */}
-        <div
-          className="hero"
-          style={{ backgroundImage: `url('${heroBg}')` }}
-        >
-          <div className="relative z-10 mx-auto max-w-6xl px-4 py-16">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <img src="/assets/pixel/logo/best-bet-nfl.png" alt="Best Bet NFL" className="w-14 h-14" />
-                <div>
-                  <h1 className="text-2xl font-bold leading-tight">Best Bet NFL</h1>
-                  <p className="text-white/70">Actual probabilities for NFL bets</p>
-                </div>
+      {/* Overlays */}
+      {phase !== "menu" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
+          {phase === "boot" && (
+            <div className="text-center">
+              <div className="text-2xl font-bold mb-4">Best Bet NFL</div>
+              <div className="w-64 h-3 bg-white/10 rounded overflow-hidden mx-auto">
+                <div
+                  className="h-full bg-white"
+                  style={{ width: `${bootProgress}%` }}
+                />
               </div>
-              <button
-                className="btn"
-                onClick={doRefresh}
-                title="Refresh data"
-                style={{ backgroundColor: "rgba(255,255,255,0.10)", borderColor: "rgba(255,255,255,0.20)", borderWidth: 1 }}
-              >
-                <RefreshCw className="mr-2 h-4 w-4" /> Refresh
-              </button>
+              <div className="text-white/60 text-sm mt-2">Loading... {bootProgress}%</div>
             </div>
-          </div>
+          )}
+
+          {phase === "landing" && (
+            <div className="text-center space-y-4">
+              <div className="text-3xl font-bold tracking-wide">Best Bet NFL</div>
+              <div className="text-white/70">Press Start to continue</div>
+            </div>
+          )}
+
+          {phase === "home" && (
+            <div className="text-center space-y-4">
+              <div className="text-4xl font-extrabold">Best Bet NFL</div>
+              <button className="btn btn-primary" onClick={() => setPhase("menu")}>Start</button>
+            </div>
+          )}
         </div>
+      )}
 
-        {/* Content */}
-        <div className="mx-auto max-w-6xl px-4 py-6 grid md:grid-cols-3 gap-6">
-          {/* Left menu */}
-          <div className="card h-fit">
-            <div className="text-sm uppercase tracking-widest text-white/60 mb-3">Main Menu</div>
-            <div className="grid gap-2">
-              <button className={`btn ${tab === "single" ? "btn-primary" : ""}`} onClick={() => setTab("single")}>Single / Moneyline / Spread / Player</button>
-              <button className={`btn ${tab === "parlay" ? "btn-primary" : ""}`} onClick={() => setTab("parlay")}>Parlay</button>
-              <button className={`btn ${tab === "batch" ? "btn-primary" : ""}`} onClick={() => setTab("batch")}>Batch JSON</button>
+      {/* Main app only when in menu phase */}
+      {phase === "menu" && (
+        <div className="min-h-screen">
+          {/* Header */}
+          <div
+            className="relative min-h-[220px] flex items-end bg-cover bg-center"
+            style={{ backgroundImage: `url(${heroBg})` }}
+          >
+            <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.4),rgba(0,0,0,0.85))]" />
+            <div className="relative container mx-auto px-4 py-10">
+              <div className="flex items-center gap-3 text-white/80 text-sm">
+                <TrendingUp size={16} />
+                <span>Best Bet NFL</span>
+              </div>
+              <h1 className="text-2xl md:text-3xl font-bold mt-2">Betting Simulator & True Odds Engine</h1>
+              <p className="text-white/70 max-w-3xl mt-2">
+                Simulate singles, parlays, or batch slips and see true probabilities (0.01% precision) and EV.
+              </p>
+              <div className="mt-4">
+                <button className="btn" onClick={doRefresh} disabled={busy}>
+                  <RefreshCw size={16} className="mr-2" />
+                  Refresh weekly stats
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Right panels */}
-          <div className="md:col-span-2 grid gap-6">
-            {/* SINGLE */}
-            {tab === "single" && (
-              <div className="card">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                  <h2 className="text-lg font-semibold">Place Bet</h2>
+          {/* Body */}
+          <div className="container mx-auto px-4 py-8 grid md:grid-cols-3 gap-6">
+            {/* Left menu */}
+            <div className="card h-fit">
+              <div className="text-sm uppercase tracking-widest text-white/60 mb-3">Main Menu</div>
+              <div className="grid gap-2">
+                <button className={`btn ${tab === "single" ? "btn-primary" : ""}`} onClick={() => setTab("single")}>
+                  Single / Moneyline / Spread / Player
+                </button>
+                <button className={`btn ${tab === "parlay" ? "btn-primary" : ""}`} onClick={() => setTab("parlay")}>
+                  Parlay
+                </button>
+                <button className={`btn ${tab === "batch" ? "btn-primary" : ""}`} onClick={() => setTab("batch")}>
+                  Batch JSON
+                </button>
+              </div>
+            </div>
 
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-white/70">Mode:</span>
+            {/* Right panels */}
+            <div className="md:col-span-2 grid gap-6">
+              {/* SINGLE */}
+              {tab === "single" && (
+                <div className="card">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <h2 className="text-lg font-semibold">Place Bet</h2>
+
                     <div className="flex items-center gap-2">
-                      <button
-                        className={`btn ${betMode === "team" ? "btn-primary" : ""}`}
-                        onClick={() => setBetMode("team")}
-                      >
-                        Team
-                      </button>
-                      <button
-                        className={`btn ${betMode === "player" ? "btn-primary" : ""}`}
-                        onClick={() => setBetMode("player")}
-                      >
-                        Player
-                      </button>
+                      <span className="text-sm text-white/70">Mode:</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          className={`btn ${betMode === "team" ? "btn-primary" : ""}`}
+                          onClick={() => setBetMode("team")}
+                        >
+                          Team
+                        </button>
+                        <button
+                          className={`btn ${betMode === "player" ? "btn-primary" : ""}`}
+                          onClick={() => setBetMode("player")}
+                        >
+                          Player
+                        </button>
+                      </div>
                     </div>
+
+                    {betMode === "team" && (
+                      <div className="text-white/60 text-sm flex items-center gap-2">
+                        <Percent size={16}/>
+                        Implied: {pct(impliedSingle)}
+                      </div>
+                    )}
                   </div>
 
+                  {/* TEAM MODE */}
                   {betMode === "team" && (
-                    <div className="text-white/60 text-sm flex items-center gap-2">
-                      <Percent size={16}/>
-                      Implied: {pct(impliedSingle)}
-                    </div>
-                  )}
-                </div>
-
-                {/* TEAM MODE */}
-                {betMode === "team" && (
-                  <>
-                    <div className="grid-cols-form">
-                      <div>
-                        <div className="label">Home Team</div>
-                        <input className="input" value={(single as any).home_team} onChange={e => setSingle({ ...(single as any), home_team: e.target.value } as unknown as SingleReq)}/>
-                      </div>
-                      <div>
-                        <div className="label">Away Team</div>
-                        <input className="input" value={(single as any).away_team} onChange={e => setSingle({ ...(single as any), away_team: e.target.value } as unknown as SingleReq)}/>
-                      </div>
-                      <div>
-                        <div className="label">Market</div>
-                        <select className="input" value={(single as any).market} onChange={e => setSingle({ ...(single as any), market: e.target.value as any } as unknown as SingleReq)}>
-                          <option value="moneyline">Moneyline</option>
-                          <option value="spread">Spread</option>
-                        </select>
-                      </div>
-                      <div>
-                        <div className="label">Pick</div>
-                        <select className="input" value={(single as any).pick} onChange={e => setSingle({ ...(single as any), pick: e.target.value as any } as unknown as SingleReq)}>
-                          <option value="home">Home</option>
-                          <option value="away">Away</option>
-                        </select>
-                      </div>
-                      <div>
-                        <div className="label">American Odds</div>
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <label className="label">Home Team</label>
                         <input
-                          type="number"
                           className="input"
-                          value={(single as any).american_odds}
-                          onChange={e => setSingle({ ...(single as any), american_odds: clampNum(e.target.value, -110) } as unknown as SingleReq)}
+                          value={(single as any).home_team ?? ""}
+                          onChange={(e) => setSingle({ ...(single as any), home_team: e.target.value } as any)}
                         />
                       </div>
-                      {((single as any).market === "spread") && (
-                        <div>
-                          <div className="label">Line (spread_line)</div>
+                      <div className="grid gap-2">
+                        <label className="label">Away Team</label>
+                        <input
+                          className="input"
+                          value={(single as any).away_team ?? ""}
+                          onChange={(e) => setSingle({ ...(single as any), away_team: e.target.value } as any)}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Market</label>
+                        <select
+                          className="input"
+                          value={(single as any).market}
+                          onChange={(e) => setSingle({ ...(single as any), market: e.target.value } as any)}
+                        >
+                          <option value="moneyline">moneyline</option>
+                          <option value="spread">spread</option>
+                        </select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Pick</label>
+                        <select
+                          className="input"
+                          value={(single as any).pick}
+                          onChange={(e) => setSingle({ ...(single as any), pick: e.target.value } as any)}
+                        >
+                          <option value="home">home</option>
+                          <option value="away">away</option>
+                        </select>
+                      </div>
+
+                      {(single as any).market === "spread" && (
+                        <div className="grid gap-2">
+                          <label className="label">Spread Line</label>
                           <input
-                            type="number"
                             className="input"
-                            value={(single as any).line ?? 0}
-                            onChange={e => setSingle({ ...(single as any), line: clampNum(e.target.value, 0) } as unknown as SingleReq)}
+                            type="number"
+                            value={clampNum((single as any).line, 0)}
+                            onChange={(e) => setSingle({ ...(single as any), line: Number(e.target.value) } as any)}
                           />
                         </div>
                       )}
-                      <div>
-                        <div className="label">Stake</div>
+
+                      <div className="grid gap-2">
+                        <label className="label">American Odds</label>
                         <input
-                          type="number"
                           className="input"
-                          value={(single as any).stake ?? 100}
-                          onChange={e => setSingle({ ...(single as any), stake: clampNum(e.target.value, 100) } as unknown as SingleReq)}
+                          type="number"
+                          value={clampNum((single as any).american_odds, 0)}
+                          onChange={(e) => setSingle({ ...(single as any), american_odds: Number(e.target.value) } as any)}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Stake</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={clampNum((single as any).stake, 100)}
+                          onChange={(e) => setSingle({ ...(single as any), stake: Number(e.target.value) } as any)}
                         />
                       </div>
                     </div>
+                  )}
 
-                    <div className="mt-4 flex items-center gap-3">
-                      <button className="btn btn-primary" onClick={doSingle} disabled={busy}>
-                        <TrendingUp className="mr-2 h-4 w-4" /> Evaluate
-                      </button>
-                      {busy && <div className="text-white/60 text-sm">Crunching numbers…</div>}
-                      {err && <div className="text-red-400 text-sm">{err}</div>}
-                    </div>
-                  </>
-                )}
+                  {/* PLAYER MODE */}
+                  {betMode === "player" && (
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <label className="label">Player</label>
+                        <input
+                          className="input"
+                          value={playerName}
+                          onChange={(e) => setPlayerName(e.target.value)}
+                        />
+                      </div>
 
-                {/* PLAYER MODE */}
-                {betMode === "player" && (
-                  <>
-                    <div className="grid-cols-form">
-                      <div>
-                        <div className="label">Player</div>
-                        <input className="input" value={playerName} onChange={e => setPlayerName(e.target.value)} placeholder="e.g., Patrick Mahomes"/>
-                      </div>
-                      <div>
-                        <div className="label">Opponent Team</div>
-                        <input className="input" value={playerOpponent} onChange={e => setPlayerOpponent(e.target.value.toUpperCase())} placeholder="e.g., BUF"/>
-                      </div>
-                      <div>
-                        <div className="label">Metric</div>
-                        <select className="input" value={playerMetric} onChange={e => setPlayerMetric(e.target.value as any)}>
-                          {PLAYER_METRICS.map(m => <option value={m} key={m}>{m}</option>)}
+                      <div className="grid gap-2">
+                        <label className="label">Metric</label>
+                        <select
+                          className="input"
+                          value={playerMetric}
+                          onChange={(e) => setPlayerMetric(e.target.value as any)}
+                        >
+                          {PLAYER_METRICS.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
                         </select>
                       </div>
-                      <div>
-                        <div className="label">Outcome</div>
-                        <select className="input" value={playerOverUnder} onChange={e => setPlayerOverUnder(e.target.value as "over" | "under")}>
-                          <option value="over">Over</option>
-                          <option value="under">Under</option>
+
+                      <div className="grid gap-2">
+                        <label className="label">Side</label>
+                        <select
+                          className="input"
+                          value={playerOverUnder}
+                          onChange={(e) => setPlayerOverUnder(e.target.value as any)}
+                        >
+                          <option value="over">over</option>
+                          <option value="under">under</option>
                         </select>
                       </div>
-                      <div>
-                        <div className="label">Line</div>
-                        <input type="number" className="input" step="0.1" value={playerLine} onChange={e => setPlayerLine(clampNum(e.target.value, 0))}/>
+
+                      <div className="grid gap-2">
+                        <label className="label">Line</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={playerLine}
+                          onChange={(e) => setPlayerLine(Number(e.target.value))}
+                        />
                       </div>
-                      <div>
-                        <div className="label">American Odds</div>
-                        <input type="number" className="input" value={playerOdds} onChange={e => setPlayerOdds(clampNum(e.target.value, -110))}/>
+
+                      <div className="grid gap-2">
+                        <label className="label">Opponent (abbr)</label>
+                        <input
+                          className="input"
+                          value={playerOpponent}
+                          onChange={(e) => setPlayerOpponent(e.target.value)}
+                        />
                       </div>
-                      <div>
-                        <div className="label">Stake</div>
-                        <input type="number" className="input" value={playerStake} onChange={e => setPlayerStake(clampNum(e.target.value, 100))}/>
+
+                      <div className="grid gap-2">
+                        <label className="label">American Odds</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={playerOdds}
+                          onChange={(e) => setPlayerOdds(Number(e.target.value))}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Stake</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={playerStake}
+                          onChange={(e) => setPlayerStake(Number(e.target.value))}
+                        />
                       </div>
                     </div>
+                  )}
 
-                    <div className="mt-4 flex items-center gap-3">
-                      <button className="btn btn-primary" onClick={doSingle} disabled={busy}>
-                        <TrendingUp className="mr-2 h-4 w-4" /> Evaluate
-                      </button>
-                      {busy && <div className="text-white/60 text-sm">Crunching numbers…</div>}
-                      {err && <div className="text-red-400 text-sm">{err}</div>}
-                    </div>
-                  </>
-                )}
-
-                {/* Results */}
-                {result && "probability" in result && (
-                  <div className="mt-6 bg-white/5 border border-white/10 rounded-xl p-4">
-                    <div className="text-sm text-white/70">Model Output</div>
-                    <div className="mt-2 text-xl font-semibold">Hit Probability: {pct(result.probability)}</div>
-                    <div className="text-white/70">EV: {result.expected_value.toFixed(2)}</div>
+                  <div className="mt-6 flex justify-end">
+                    <button className="btn btn-primary" onClick={doSingle} disabled={busy}>
+                      {busy ? "Evaluating..." : "Evaluate"}
+                    </button>
                   </div>
-                )}
-              </div>
-            )}
+                </div>
+              )}
 
-            {/* PARLAY & BATCH sections — unchanged UI; doParlay/doBatch already translate payloads */}
+              {/* PARLAY */}
+              {tab === "parlay" && (
+                <div className="card">
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-lg font-semibold">Parlay</h2>
+                    <button className="btn btn-primary" onClick={doParlay} disabled={busy}>
+                      {busy ? "Evaluating..." : "Evaluate Parlay"}
+                    </button>
+                  </div>
+
+                  <div className="grid gap-4">
+                    {parlay.legs.map((leg, idx) => (
+                      <div key={idx} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+                        <div>
+                          <label className="label">Home</label>
+                          <input
+                            className="input"
+                            value={(leg as any).home_team ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setParlay((p) => {
+                                const copy = { ...p, legs: p.legs.map((l, i) => (i === idx ? { ...l, home_team: v } : l)) };
+                                return copy as any;
+                              });
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Away</label>
+                          <input
+                            className="input"
+                            value={(leg as any).away_team ?? ""}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setParlay((p) => {
+                                const copy = { ...p, legs: p.legs.map((l, i) => (i === idx ? { ...l, away_team: v } : l)) };
+                                return copy as any;
+                              });
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="label">Market</label>
+                          <select
+                            className="input"
+                            value={(leg as any).market ?? "moneyline"}
+                            onChange={(e) => {
+                              const v = e.target.value as any;
+                              setParlay((p) => {
+                                const copy = { ...p, legs: p.legs.map((l, i) => (i === idx ? { ...l, market: v } : l)) };
+                                return copy as any;
+                              });
+                            }}
+                          >
+                            <option value="moneyline">moneyline</option>
+                            <option value="spread">spread</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="label">Pick</label>
+                          <select
+                            className="input"
+                            value={(leg as any).pick ?? "home"}
+                            onChange={(e) => {
+                              const v = e.target.value as any;
+                              setParlay((p) => {
+                                const copy = { ...p, legs: p.legs.map((l, i) => (i === idx ? { ...l, pick: v } : l)) };
+                                return copy as any;
+                              });
+                            }}
+                          >
+                            <option value="home">home</option>
+                            <option value="away">away</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="label">Line (for spread)</label>
+                          <input
+                            className="input"
+                            type="number"
+                            value={Number((leg as any).line ?? 0)}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setParlay((p) => {
+                                const copy = { ...p, legs: p.legs.map((l, i) => (i === idx ? { ...l, line: v } : l)) };
+                                return copy as any;
+                              });
+                            }}
+                          />
+                        </div>
+                        <div>
+                          <label className="label">American Odds</label>
+                          <input
+                            className="input"
+                            type="number"
+                            value={Number((leg as any).american_odds ?? 0)}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setParlay((p) => {
+                                const copy = { ...p, legs: p.legs.map((l, i) => (i === idx ? { ...l, american_odds: v } : l)) };
+                                return copy as any;
+                              });
+                            }}
+                          />
+                        </div>
+                        <div className="md:col-span-6 flex justify-end">
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() =>
+                              setParlay((p) => ({ ...p, legs: p.legs.filter((_, i) => i !== idx) } as any))
+                            }
+                          >
+                            Remove leg
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+
+                    <div className="flex items-center justify-between">
+                      <button
+                        className="btn"
+                        onClick={() =>
+                          setParlay((p) => ({
+                            ...p,
+                            legs: [
+                              ...p.legs,
+                              { home_team: "NYJ", away_team: "BUF", market: "moneyline", pick: "home", american_odds: -110 } as any,
+                            ],
+                          } as any))
+                        }
+                      >
+                        + Add leg
+                      </button>
+
+                      <div className="flex items-center gap-2">
+                        <label className="label">Stake</label>
+                        <input
+                          className="input w-28"
+                          type="number"
+                          value={Number((parlay as any).stake ?? 10)}
+                          onChange={(e) => setParlay((p) => ({ ...p, stake: Number(e.target.value) } as any))}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* BATCH JSON */}
+              {tab === "batch" && (
+                <div className="card">
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-lg font-semibold">Batch JSON</h2>
+                    <button className="btn btn-primary" onClick={doBatch} disabled={busy}>
+                      {busy ? "Evaluating..." : "Evaluate Batch"}
+                    </button>
+                  </div>
+
+                  <textarea
+                    className="input min-h-[240px] font-mono"
+                    value={batchPayload}
+                    onChange={(e) => setBatchPayload(e.target.value)}
+                  />
+
+                  <div className="text-xs text-white/60 mt-2">
+                    Tip: Provide keys <code>singles</code> and <code>parlays</code>. See <code>/examples/sample_batch.json</code>.
+                  </div>
+                </div>
+              )}
+
+              {/* RESULTS */}
+              <div className="card">
+                <div className="flex items-center gap-2 mb-3">
+                  <Info size={16} />
+                  <h2 className="text-lg font-semibold">Result</h2>
+                </div>
+                <pre className="bg-black/50 p-3 rounded overflow-auto text-sm">
+                  {err ? `Error: ${err}` : JSON.stringify(result, null, 2)}
+                </pre>
+              </div>
+            </div>
+          </div>
+
+          <div className="footer">
+            © {new Date().getFullYear()} Best Bet NFL — Educational use only. Not financial advice.
           </div>
         </div>
-
-        <div className="footer">
-          © {new Date().getFullYear()} Best Bet NFL — Educational use only. Not financial advice.
-        </div>
-      </div>
+      )}
     </>
   );
 }
+
 
 
 
