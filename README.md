@@ -102,5 +102,50 @@ python -c "from src.service.api import refresh_data; print(refresh_data())"
 
 # Run the demo (evaluates singles + a parlay from examples/sample_batch.json)
 python demo.py
+```
+
+---
+
+## Example Insights
+
+- *Kyren Williams rushing yards (line 59.5)*  
+  - Model probability of exceeding: **63.2%**  
+  - Sportsbook implied odds: ~52%  
+  - → Indicates **undervalued opportunity**.  
+
+- *Christian McCaffrey rushing attempts (line 18.5)*  
+  - Model probability of under: **54.8%**  
+  - Sportsbook implied odds: ~50%  
+  - → Edge is slim, but model leans under.  
+
+---
+
+## Why It Matters
+
+Sportsbooks profit because their odds aren’t perfectly fair.  
+**Best-Bet NFL provides the other side of the equation.**
+
+This app empowers users to:  
+- **Quantify real odds** instead of trusting biased sportsbook lines.  
+- **Evaluate parlays/slips** with correlated probabilities.  
+- **Play with betting data** in a **fun, immersive game-like setting**.  
+
+---
+
+## Future Improvements
+
+- Injury/lineup integration for **real-time adjustments**.  
+- Advanced **machine learning models** (XGBoost, ensemble methods).  
+- **Bankroll simulation tools** for long-term bettor strategy.  
+- Mobile-first UI optimization for in-game usage.  
+
+---
+
+## Live Demo
+
+👉 [**Try Best-Bet NFL**](https://best-bet-nfl.vercel.app/)  
+
+---
+
 
 
