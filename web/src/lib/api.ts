@@ -1,12 +1,11 @@
 // Minimal, safe client for your backend.
 // IMPORTANT: Set NEXT_PUBLIC_API_BASE in Vercel to your backend origin, e.g.
-// https://your-fastapi-backend.example.com
+// https://best-bet-nfl-backend.onrender.com
 const API_BASE =
   (process.env.NEXT_PUBLIC_API_BASE ?? "").replace(/\/+$/, "") || "";
 
 type Json = Record<string, any>;
 
-// Helpers
 async function post<T>(path: string, body: Json): Promise<T> {
   if (!API_BASE) {
     throw new Error(
@@ -18,8 +17,6 @@ async function post<T>(path: string, body: Json): Promise<T> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body ?? {}),
-    // You can add credentials/cors if your backend needs it:
-    // mode: "cors",
   });
 
   if (!res.ok) {
@@ -61,7 +58,6 @@ export type ParlayResp = {
 };
 
 export const api = {
-  /** Team or Player single endpoints share the same evaluator on many backends. */
   async single(payload: SingleReq): Promise<SingleResp> {
     return await post<SingleResp>("/evaluate/single", payload as Json);
   },
@@ -74,11 +70,11 @@ export const api = {
   }> {
     return await post("/evaluate/batch", payload);
   },
-  /** Refresh underlying data on the backend (POST to avoid 405). */
-  async refresh(): Promise<{ status: string }> {
-    // If your backend expects a GET, you can switch to get — but many use POST.
-    return await postNoBody("/refresh");
+  /** Your backend's refresh route is POST /refresh-data */
+  async refresh(): Promise<{ ok: boolean } & Record<string, any>> {
+    return await postNoBody("/refresh-data");
   },
 };
+
 
 
