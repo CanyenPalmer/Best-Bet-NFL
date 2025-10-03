@@ -728,6 +728,27 @@ def get_team_allowed(team: str, metric_or_kind: str) -> Dict[str, Any]:
     mu, sd, n = _team_allowed_stat(team, key)
     return {"team": team.upper(), "metric_key": key, "mu": mu, "sd": sd, "n_games": n}
 
+# -----------------------------
+# NEW: expose prop kinds cleanly for UI (non-breaking additions)
+# -----------------------------
+def list_prop_kinds() -> List[str]:
+    """
+    Returns all front-end prop kinds (use this for UI autocomplete/menus).
+    Examples: 'qb_rush_attempts', 'te_targets', 'k_fg_long_made', etc.
+    """
+    return sorted(_METRIC_MAP.keys())
+
+def kind_to_metric_key(kind: str) -> str:
+    """
+    Map a front-end prop kind to the internal metric key.
+    e.g., 'wr_receptions' -> 'rec', 'rb_rush_attempts' -> 'rush_att'
+    """
+    k = kind.strip().lower()
+    if k not in _METRIC_MAP:
+        raise ValueError(f"Unknown prop kind: {kind}")
+    return _METRIC_MAP[k][1]
+
+
 
 
 
