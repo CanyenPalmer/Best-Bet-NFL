@@ -43,6 +43,21 @@ const PROP_KIND_BY_LABEL: Record<string, string> = {
 } as const;
 const PLAYER_METRICS = Object.keys(PROP_KIND_BY_LABEL) as (keyof typeof PROP_KIND_BY_LABEL)[];
 
+/* ---------------- Debounce (added) ---------------- */
+function useDebounce<T>(value: T, delay = 160) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return v;
+}
+
+/* ---------------- API base for suggestions (added) ---------------- */
+const API_BASE =
+  (typeof process !== "undefined" && (process as any).env?.NEXT_PUBLIC_API_BASE) ||
+  "http://localhost:8000";
+
 /* ---------------- Generic Dialogue Box (sprite + prompt) ---------------- */
 function DialogueBox({
   spriteSrc,
@@ -56,7 +71,7 @@ function DialogueBox({
   large?: boolean;
 }) {
   return (
-    <div className={`w-full ${large ? "bg-black/70" : "bg-black/60"} rounded-2xl p-4 md:p-5 border border-white/10 flex gap-4 items-center`}>
+    <div className={`w-full ${large ? "bg-black/70" : "bg-black/60"} rounded-2xl p-4 md:p-5 border border-white/10 flex gap-4 items-center text-white`}>
       <div className={`${large ? "w-20 h-20" : "w-14 h-14"} rounded-xl overflow-hidden bg-black/40 border border-white/10 shrink-0 flex items-center justify-center`}>
         <img
           src={spriteSrc}
@@ -249,6 +264,58 @@ export default function Page() {
   const [result, setResult] = useState<AnyResult>(null);
   const [err, setErr] = useState<string | null>(null);
   const [showResultDetails, setShowResultDetails] = useState<boolean>(false);
+
+  /* ---------- SUGGESTIONS (added) ---------- */
+  const [playerSuggest, setPlayerSuggest] = useState<string[]>([]);
+  const [teamSuggest, setTeamSuggest] = useState<string[]>([]);
+  const debPlayer = useDebounce(playerName, 160);
+  const debOpp = useDebounce(playerOpponent, 160);
+  const homeTeam = (single as any).home_team ?? "";
+  const awayTeam = (single as any).away_team ?? "";
+  const debHome = useDebounce(homeTeam, 160);
+  const debAway = useDebounce(awayTeam, 160);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      const q = (debPlayer || "").trim();
+      if (!q) {
+        if (alive) setPlayerSuggest([]);
+        return;
+      }
+      try {
+        const res = await fetch(`${API_BASE}/lists/players?prefix=${encodeURIComponent(q)}&limit=50`);
+        const json = await res.json();
+        if (alive) setPlayerSuggest(Array.isArray(json.players) ? json.players : []);
+      } catch {
+        if (alive) setPlayerSuggest([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [debPlayer]);
+
+  useEffect(() => {
+    let alive = true;
+    const q = (debOpp || debHome || debAway || "").trim();
+    if (!q) {
+      setTeamSuggest([]);
+      return () => { alive = false; };
+    }
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/lists/teams?prefix=${encodeURIComponent(q)}&limit=50`);
+        const json = await res.json();
+        if (alive) setTeamSuggest(Array.isArray(json.teams) ? json.teams : []);
+      } catch {
+        if (alive) setTeamSuggest([]);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [debOpp, debHome, debAway]);
 
   /* ---------- Actions ---------- */
   async function doSingle() {
@@ -651,6 +718,7 @@ export default function Page() {
                         <label className="label">Home Team</label>
                         <input
                           className="input"
+                          list="teams-list"
                           value={(single as any).home_team ?? ""}
                           onChange={(e) => setSingle({ ...(single as any), home_team: e.target.value } as any)}
                         />
@@ -659,6 +727,7 @@ export default function Page() {
                         <label className="label">Away Team</label>
                         <input
                           className="input"
+                          list="teams-list"
                           value={(single as any).away_team ?? ""}
                           onChange={(e) => setSingle({ ...(single as any), away_team: e.target.value } as any)}
                         />
@@ -727,7 +796,12 @@ export default function Page() {
                     <div className="grid md:grid-cols-2 gap-4">
                       <div className="grid gap-2">
                         <label className="label">Player</label>
-                        <input className="input" value={playerName} onChange={(e) => setPlayerName(e.target.value)} />
+                        <input
+                          className="input"
+                          list="players-list"
+                          value={playerName}
+                          onChange={(e) => setPlayerName(e.target.value)}
+                        />
                       </div>
 
                       <div className="grid gap-2">
@@ -769,6 +843,7 @@ export default function Page() {
                         <label className="label">Opponent (abbr)</label>
                         <input
                           className="input"
+                          list="teams-list"
                           value={playerOpponent}
                           onChange={(e) => setPlayerOpponent(e.target.value)}
                         />
@@ -849,6 +924,7 @@ export default function Page() {
                               <label className="label">Home</label>
                               <input
                                 className="input"
+                                list="teams-list"
                                 value={(leg as any).home_team ?? ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
@@ -866,6 +942,7 @@ export default function Page() {
                               <label className="label">Away</label>
                               <input
                                 className="input"
+                                list="teams-list"
                                 value={(leg as any).away_team ?? ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
@@ -967,6 +1044,7 @@ export default function Page() {
                               <label className="label">Player</label>
                               <input
                                 className="input"
+                                list="players-list"
                                 value={(leg as any).player ?? ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
@@ -1043,6 +1121,7 @@ export default function Page() {
                               <label className="label">Opponent (abbr)</label>
                               <input
                                 className="input"
+                                list="teams-list"
                                 value={(leg as any).opponent ?? ""}
                                 onChange={(e) => {
                                   const v = e.target.value;
@@ -1266,9 +1345,22 @@ export default function Page() {
           </div>
         </div>
       )}
+
+      {/* DATALISTS (added) */}
+      <datalist id="players-list">
+        {playerSuggest.map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
+      <datalist id="teams-list">
+        {teamSuggest.map((t) => (
+          <option key={t} value={t} />
+        ))}
+      </datalist>
     </>
   );
 }
+
 
 
 
