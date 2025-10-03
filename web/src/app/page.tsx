@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useEffect } from "react";
 import { api, SingleReq, ParlayReq, ParlayResp, SingleResp } from "@/lib/api";
-import { RefreshCw, Percent, Info, TrendingUp } from "lucide-react";
+import { RefreshCw, Percent, Info, TrendingUp, ArrowLeft } from "lucide-react";
 
 /* ---------- helpers ---------- */
 function impliedFromAmerican(odds: number): number {
@@ -10,11 +10,11 @@ function impliedFromAmerican(odds: number): number {
   if (Number.isNaN(ao)) return 0.5;
   return ao >= 0 ? 100 / (ao + 100) : Math.abs(ao) / (Math.abs(ao) + 100);
 }
-function pct(n: number) {
-  const p = Math.max(0, Math.min(1, n));
+function pct01(n: number | undefined | null) {
+  if (n == null || !Number.isFinite(Number(n))) return "—";
+  const p = Math.max(0, Math.min(1, Number(n)));
   return `${(p * 100).toFixed(2)}%`;
 }
-
 type Tab = "single" | "parlay" | "batch";
 type AnyResult =
   | SingleResp
@@ -23,7 +23,7 @@ type AnyResult =
   | null;
 
 /* ---------- overlay phases ---------- */
-type Phase = "boot" | "landing" | "home" | "menu";
+type Phase = "boot" | "landing" | "home" | "main" | "menu";
 
 /* ---------- bet modes ---------- */
 type BetMode = "team" | "player";
@@ -43,11 +43,106 @@ const PROP_KIND_BY_LABEL: Record<string, string> = {
 
 const PLAYER_METRICS = Object.keys(PROP_KIND_BY_LABEL) as (keyof typeof PROP_KIND_BY_LABEL)[];
 
+/* ---------- dialogue summary (uses sprite) ---------- */
+function DialogueSummary({ result }: { result: AnyResult }) {
+  if (!result) return null;
+
+  // Try to detect shape and produce a friendly summary
+  const lines: string[] = [];
+  let title = "Evaluation Summary";
+
+  const tryField = (obj: any, keys: string[]) => {
+    for (const k of keys) if (obj && obj[k] != null) return obj[k];
+    return undefined;
+  };
+
+  const asSingle = (r: any) =>
+    r && (typeof r === "object") && ("probability" in r || "p_win" in r);
+
+  const asParlay = (r: any) =>
+    r && (typeof r === "object") && ("legs" in r || "combined" in r || "parlay" in r);
+
+  const asBatch = (r: any) =>
+    r && (typeof r === "object") && ("singles" in r || "parlays" in r);
+
+  if (asBatch(result)) {
+    const b: any = result;
+    const sc = Array.isArray(b.singles) ? b.singles.length : 0;
+    const pc = Array.isArray(b.parlays) ? b.parlays.length : 0;
+    title = "Batch Results";
+    lines.push(`Singles evaluated: ${sc}`);
+    lines.push(`Parlays evaluated: ${pc}`);
+    if (sc > 0) {
+      const first = b.singles[0];
+      const p = tryField(first, ["probability", "p_win"]);
+      const ev = tryField(first, ["ev", "expected_value"]);
+      lines.push(`Example single → P(win): ${pct01(p)} | EV: ${ev ?? "—"}`);
+    }
+    if (pc > 0) {
+      const first = b.parlays[0];
+      const p = tryField(first, ["probability", "p_win", "combined_probability"]);
+      lines.push(`Example parlay → P(hit): ${pct01(p)}`);
+    }
+  } else if (asParlay(result)) {
+    const p = tryField(result as any, ["probability", "p_win", "combined_probability"]);
+    const payout = tryField(result as any, ["payout", "payout_if_win"]);
+    const ev = tryField(result as any, ["ev", "expected_value"]);
+    const legCount =
+      Array.isArray((result as any).legs) ? (result as any).legs.length : tryField(result as any, ["leg_count"]) ?? "—";
+    title = "Parlay";
+    lines.push(`Legs: ${legCount}`);
+    lines.push(`P(hit): ${pct01(p)}`);
+    if (payout != null) lines.push(`Payout if win: ${payout}`);
+    if (ev != null) lines.push(`EV: ${ev}`);
+  } else if (asSingle(result)) {
+    const p = tryField(result as any, ["probability", "p_win"]);
+    const payout = tryField(result as any, ["payout", "payout_if_win"]);
+    const ev = tryField(result as any, ["ev", "expected_value"]);
+    const market = tryField(result as any, ["market"]);
+    const team = tryField(result as any, ["team"]);
+    const player = tryField(result as any, ["player"]);
+    title = player ? `Single • ${player}` : `Single${market ? ` • ${market}` : ""}`;
+    if (team) lines.push(`Team: ${team}`);
+    lines.push(`P(win): ${pct01(p)}`);
+    if (payout != null) lines.push(`Payout if win: ${payout}`);
+    if (ev != null) lines.push(`EV: ${ev}`);
+  } else {
+    title = "Result";
+    lines.push("Evaluation complete. See details below.");
+  }
+
+  return (
+    <div className="w-full bg-black/60 rounded-xl p-3 border border-white/10 flex gap-3 items-center">
+      <div className="w-14 h-14 rounded-lg overflow-hidden bg-black/40 border border-white/10 shrink-0 flex items-center justify-center">
+        {/* Player sprite in the dialogue photo box */}
+        {/* Ensure /assets/ui/player-sprite.png exists; otherwise this gracefully stays blank */}
+        <img
+          src="/assets/ui/player-sprite.png"
+          alt="Player"
+          className="object-contain w-full h-full"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      </div>
+      <div className="flex-1">
+        <div className="text-sm font-semibold">{title}</div>
+        <div className="text-xs text-white/80 leading-5">
+          {lines.map((l, i) => (
+            <div key={i}>{l}</div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- page ---------- */
 export default function Page() {
   const [phase, setPhase] = useState<Phase>("boot");
   const [bootProgress, setBootProgress] = useState(0);
 
-  /* Boot progress → landing → home (start screen) */
+  /* Boot progress → landing → home (Start) */
   useEffect(() => {
     if (phase !== "boot") return;
     const total = 2250;
@@ -59,7 +154,7 @@ export default function Page() {
       setBootProgress(p);
       if (p >= 100) {
         setPhase("landing");
-        const id = setTimeout(() => setPhase("home"), 600);
+        const id = setTimeout(() => setPhase("home"), 650);
         return () => clearTimeout(id);
       } else {
         raf = requestAnimationFrame(tick);
@@ -70,18 +165,17 @@ export default function Page() {
   }, [phase]);
 
   /* ---------- Single bet UI state ---------- */
-  // Place Bet: Team vs Team UI
   const [single, setSingle] = useState<SingleReq>(() => ({
     home_team: "PIT",
     away_team: "BAL",
-    market: "moneyline", // "moneyline" | "spread"
-    pick: "home", // "home" | "away"
-    american_odds: -120, // UI-only; translated to "odds"
-    line: 0, // for spread
-    stake: 100, // default stake
+    market: "moneyline",
+    pick: "home",
+    american_odds: -120,
+    line: 0,
+    stake: 100,
   } as unknown as SingleReq));
 
-  // Place Bet: Player prop UI
+  /* Player prop UI */
   const [betMode, setBetMode] = useState<BetMode>("team");
   const [playerName, setPlayerName] = useState<string>("Patrick Mahomes");
   const [playerMetric, setPlayerMetric] =
@@ -90,10 +184,10 @@ export default function Page() {
     useState<"over" | "under">("over");
   const [playerLine, setPlayerLine] = useState<number>(275.5);
   const [playerOdds, setPlayerOdds] = useState<number>(-110);
-  const [playerOpponent, setPlayerOpponent] = useState<string>("BUF"); // backend expects opponent_team
+  const [playerOpponent, setPlayerOpponent] = useState<string>("BUF");
   const [playerStake, setPlayerStake] = useState<number>(100);
 
-  // Parlay (UI state) – keep UI flexible (any), narrow locally for rendering
+  /* Parlay (UI state) – flexible, narrow locally for UI */
   const [parlay, setParlay] = useState<any>(() => ({
     legs: [
       {
@@ -114,7 +208,17 @@ export default function Page() {
     ],
     stake: 10,
   }));
+  type UILeg = {
+    home_team?: string;
+    away_team?: string;
+    market?: "moneyline" | "spread";
+    pick?: "home" | "away";
+    line?: number;
+    american_odds?: number;
+  };
+  const parlayLegs: UILeg[] = Array.isArray(parlay?.legs) ? (parlay.legs as UILeg[]) : [];
 
+  /* Batch JSON payload */
   const [batchPayload, setBatchPayload] = useState<string>(`{
   "singles": [
     { "market": "moneyline", "team": "PIT", "opponent": "BAL", "odds": -120, "stake": 100 }
@@ -127,7 +231,10 @@ export default function Page() {
   ]
 }`);
 
+  /* UI tabs */
   const [tab, setTab] = useState<Tab>("single");
+
+  /* busy/result/error */
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<AnyResult>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -177,12 +284,11 @@ export default function Page() {
         const r = await api.single(payload);
         setResult(r);
       } else {
-        // Player prop → backend "prop" payload
         const payload = {
           market: "prop",
           player: playerName,
           prop_kind: PROP_KIND_BY_LABEL[playerMetric],
-          side: playerOverUnder, // "over" | "under"
+          side: playerOverUnder,
           line: Number(playerLine),
           opponent: playerOpponent,
           odds: Number(playerOdds),
@@ -202,7 +308,7 @@ export default function Page() {
     try {
       setBusy(true);
       setErr(null);
-      const payload = parlay as ParlayReq; // send through to the API
+      const payload = parlay as ParlayReq;
       const r = await api.parlay(payload);
       setResult(r);
     } catch (e: any) {
@@ -230,19 +336,13 @@ export default function Page() {
     try {
       setBusy(true);
       setErr(null);
-      await api.refresh(); // calls POST /refresh-data
+      await api.refresh();
     } catch (e: any) {
       setErr(e?.message ?? "Refresh failed");
     } finally {
       setBusy(false);
     }
   }
-
-  // Implied probability from american_odds (Team mode only)
-  const impliedSingle = useMemo(
-    () => impliedFromAmerican((((single as any).american_odds as number) ?? 0)),
-    [ (single as any).american_odds ]
-  );
 
   /* ---------- dynamic background per view ---------- */
   const heroBg =
@@ -252,30 +352,29 @@ export default function Page() {
       ? "/assets/bg/bg-stats.png"
       : "/assets/bg/bg-settings.png";
 
-  /* ---------- local narrow for parlay legs (UI only) ---------- */
-  type UILeg = {
-    home_team?: string;
-    away_team?: string;
-    market?: "moneyline" | "spread";
-    pick?: "home" | "away";
-    line?: number;
-    american_odds?: number;
-  };
-  const parlayLegs: UILeg[] = Array.isArray(parlay?.legs) ? (parlay.legs as UILeg[]) : [];
-
+  /* ---------- RENDER ---------- */
   return (
     <>
-      {/* Overlays */}
+      {/* Overlays / Flow control */}
       {phase !== "menu" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
           {phase === "boot" && (
             <div className="text-center">
+              {/* LOGO */}
+              <div className="mx-auto w-28 h-28 mb-4 flex items-center justify-center">
+                <img
+                  src="/assets/brand/logo.png"
+                  alt="Best Bet NFL"
+                  className="object-contain w-full h-full"
+                  onError={(e) => {
+                    // fallback: render text if logo doesn't exist
+                    (e.currentTarget as HTMLImageElement).style.display = "none";
+                  }}
+                />
+              </div>
               <div className="text-2xl font-bold mb-4">Best Bet NFL</div>
               <div className="w-64 h-3 bg-white/10 rounded overflow-hidden mx-auto">
-                <div
-                  className="h-full bg-white"
-                  style={{ width: `${bootProgress}%` }}
-                />
+                <div className="h-full bg-white" style={{ width: `${bootProgress}%` }} />
               </div>
               <div className="text-white/60 text-sm mt-2">Loading... {bootProgress}%</div>
             </div>
@@ -283,15 +382,68 @@ export default function Page() {
 
           {phase === "landing" && (
             <div className="text-center space-y-4">
+              <div className="mx-auto w-32 h-32">
+                <img
+                  src="/assets/brand/logo.png"
+                  alt="Best Bet NFL"
+                  className="object-contain w-full h-full"
+                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                />
+              </div>
               <div className="text-3xl font-bold tracking-wide">Best Bet NFL</div>
               <div className="text-white/70">Press Start to continue</div>
             </div>
           )}
 
           {phase === "home" && (
-            <div className="text-center space-y-4">
+            <div className="text-center space-y-5">
+              <div className="mx-auto w-32 h-32">
+                <img
+                  src="/assets/brand/logo.png"
+                  alt="Best Bet NFL"
+                  className="object-contain w-full h-full"
+                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                />
+              </div>
               <div className="text-4xl font-extrabold">Best Bet NFL</div>
-              <button className="btn btn-primary" onClick={() => setPhase("menu")}>Start</button>
+              <button className="btn btn-primary" onClick={() => setPhase("main")}>Start</button>
+            </div>
+          )}
+
+          {phase === "main" && (
+            <div className="w-full px-6">
+              <div className="max-w-xl mx-auto bg-black/60 rounded-2xl p-6 border border-white/10">
+                <div className="text-center text-xl font-bold mb-4">Main Menu</div>
+                <div className="grid gap-3">
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      setTab("single");
+                      setPhase("menu");
+                    }}
+                  >
+                    Single / Moneyline / Spread / Player
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      setTab("parlay");
+                      setPhase("menu");
+                    }}
+                  >
+                    Parlay
+                  </button>
+                  <button
+                    className="btn"
+                    onClick={() => {
+                      setTab("batch");
+                      setPhase("menu");
+                    }}
+                  >
+                    Batch JSON
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -315,7 +467,11 @@ export default function Page() {
               <p className="text-white/70 max-w-3xl mt-2">
                 Simulate singles, parlays, or batch slips and see true probabilities (0.01% precision) and EV.
               </p>
-              <div className="mt-4">
+              <div className="mt-4 flex gap-2">
+                <button className="btn" onClick={() => setPhase("main")}>
+                  <ArrowLeft size={16} className="mr-2" />
+                  Back
+                </button>
                 <button className="btn" onClick={doRefresh} disabled={busy}>
                   <RefreshCw size={16} className="mr-2" />
                   Refresh weekly stats
@@ -328,7 +484,7 @@ export default function Page() {
           <div className="container mx-auto px-4 py-8 grid md:grid-cols-3 gap-6">
             {/* Left menu */}
             <div className="card h-fit">
-              <div className="text-sm uppercase tracking-widest text-white/60 mb-3">Main Menu</div>
+              <div className="text-sm uppercase tracking-widest text-white/60 mb-3">Sections</div>
               <div className="grid gap-2">
                 <button className={`btn ${tab === "single" ? "btn-primary" : ""}`} onClick={() => setTab("single")}>
                   Single / Moneyline / Spread / Player
@@ -342,203 +498,205 @@ export default function Page() {
               </div>
             </div>
 
-            {/* Right panels */}
+            {/* Right panels (only one renders at a time) */}
             <div className="md:col-span-2 grid gap-6">
-              {/* SINGLE */}
-              <div className="card">
-                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-                  <h2 className="text-lg font-semibold">Place Bet</h2>
+              {/* SINGLE (only on tab === 'single') */}
+              {tab === "single" && (
+                <div className="card">
+                  <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                    <h2 className="text-lg font-semibold">Place Bet</h2>
 
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-white/70">Mode:</span>
                     <div className="flex items-center gap-2">
-                      <button
-                        className={`btn ${betMode === "team" ? "btn-primary" : ""}`}
-                        onClick={() => setBetMode("team")}
-                      >
-                        Team
-                      </button>
-                      <button
-                        className={`btn ${betMode === "player" ? "btn-primary" : ""}`}
-                        onClick={() => setBetMode("player")}
-                      >
-                        Player
-                      </button>
+                      <span className="text-sm text-white/70">Mode:</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          className={`btn ${betMode === "team" ? "btn-primary" : ""}`}
+                          onClick={() => setBetMode("team")}
+                        >
+                          Team
+                        </button>
+                        <button
+                          className={`btn ${betMode === "player" ? "btn-primary" : ""}`}
+                          onClick={() => setBetMode("player")}
+                        >
+                          Player
+                        </button>
+                      </div>
                     </div>
+
+                    {betMode === "team" && (
+                      <div className="text-white/60 text-sm flex items-center gap-2">
+                        <Percent size={16} />
+                        Implied: {pct01(impliedFromAmerican(((single as any).american_odds as number) ?? 0))}
+                      </div>
+                    )}
                   </div>
 
+                  {/* TEAM MODE */}
                   {betMode === "team" && (
-                    <div className="text-white/60 text-sm flex items-center gap-2">
-                      <Percent size={16}/>
-                      Implied: {pct(impliedSingle)}
-                    </div>
-                  )}
-                </div>
-
-                {/* TEAM MODE */}
-                {betMode === "team" && (
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <label className="label">Home Team</label>
-                      <input
-                        className="input"
-                        value={(single as any).home_team ?? ""}
-                        onChange={(e) => setSingle({ ...(single as any), home_team: e.target.value } as any)}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <label className="label">Away Team</label>
-                      <input
-                        className="input"
-                        value={(single as any).away_team ?? ""}
-                        onChange={(e) => setSingle({ ...(single as any), away_team: e.target.value } as any)}
-                      />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <label className="label">Market</label>
-                      <select
-                        className="input"
-                        value={(single as any).market}
-                        onChange={(e) => setSingle({ ...(single as any), market: e.target.value } as any)}
-                      >
-                        <option value="moneyline">moneyline</option>
-                        <option value="spread">spread</option>
-                      </select>
-                    </div>
-
-                    <div className="grid gap-2">
-                      <label className="label">Pick</label>
-                      <select
-                        className="input"
-                        value={(single as any).pick}
-                        onChange={(e) => setSingle({ ...(single as any), pick: e.target.value } as any)}
-                      >
-                        <option value="home">home</option>
-                        <option value="away">away</option>
-                      </select>
-                    </div>
-
-                    {(single as any).market === "spread" && (
+                    <div className="grid md:grid-cols-2 gap-4">
                       <div className="grid gap-2">
-                        <label className="label">Spread Line</label>
+                        <label className="label">Home Team</label>
+                        <input
+                          className="input"
+                          value={(single as any).home_team ?? ""}
+                          onChange={(e) => setSingle({ ...(single as any), home_team: e.target.value } as any)}
+                        />
+                      </div>
+                      <div className="grid gap-2">
+                        <label className="label">Away Team</label>
+                        <input
+                          className="input"
+                          value={(single as any).away_team ?? ""}
+                          onChange={(e) => setSingle({ ...(single as any), away_team: e.target.value } as any)}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Market</label>
+                        <select
+                          className="input"
+                          value={(single as any).market}
+                          onChange={(e) => setSingle({ ...(single as any), market: e.target.value } as any)}
+                        >
+                          <option value="moneyline">moneyline</option>
+                          <option value="spread">spread</option>
+                        </select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Pick</label>
+                        <select
+                          className="input"
+                          value={(single as any).pick}
+                          onChange={(e) => setSingle({ ...(single as any), pick: e.target.value } as any)}
+                        >
+                          <option value="home">home</option>
+                          <option value="away">away</option>
+                        </select>
+                      </div>
+
+                      {(single as any).market === "spread" && (
+                        <div className="grid gap-2">
+                          <label className="label">Spread Line</label>
+                          <input
+                            className="input"
+                            type="number"
+                            value={clampNum((single as any).line, 0)}
+                            onChange={(e) => setSingle({ ...(single as any), line: Number(e.target.value) } as any)}
+                          />
+                        </div>
+                      )}
+
+                      <div className="grid gap-2">
+                        <label className="label">American Odds</label>
                         <input
                           className="input"
                           type="number"
-                          value={clampNum((single as any).line, 0)}
-                          onChange={(e) => setSingle({ ...(single as any), line: Number(e.target.value) } as any)}
+                          value={clampNum((single as any).american_odds, 0)}
+                          onChange={(e) => setSingle({ ...(single as any), american_odds: Number(e.target.value) } as any)}
                         />
                       </div>
-                    )}
 
-                    <div className="grid gap-2">
-                      <label className="label">American Odds</label>
-                      <input
-                        className="input"
-                        type="number"
-                        value={clampNum((single as any).american_odds, 0)}
-                        onChange={(e) => setSingle({ ...(single as any), american_odds: Number(e.target.value) } as any)}
-                      />
+                      <div className="grid gap-2">
+                        <label className="label">Stake</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={clampNum((single as any).stake, 100)}
+                          onChange={(e) => setSingle({ ...(single as any), stake: Number(e.target.value) } as any)}
+                        />
+                      </div>
                     </div>
+                  )}
 
-                    <div className="grid gap-2">
-                      <label className="label">Stake</label>
-                      <input
-                        className="input"
-                        type="number"
-                        value={clampNum((single as any).stake, 100)}
-                        onChange={(e) => setSingle({ ...(single as any), stake: Number(e.target.value) } as any)}
-                      />
+                  {/* PLAYER MODE */}
+                  {betMode === "player" && (
+                    <div className="grid md:grid-cols-2 gap-4">
+                      <div className="grid gap-2">
+                        <label className="label">Player</label>
+                        <input
+                          className="input"
+                          value={playerName}
+                          onChange={(e) => setPlayerName(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Metric</label>
+                        <select
+                          className="input"
+                          value={playerMetric}
+                          onChange={(e) => setPlayerMetric(e.target.value as any)}
+                        >
+                          {PLAYER_METRICS.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Side</label>
+                        <select
+                          className="input"
+                          value={playerOverUnder}
+                          onChange={(e) => setPlayerOverUnder(e.target.value as any)}
+                        >
+                          <option value="over">over</option>
+                          <option value="under">under</option>
+                        </select>
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Line</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={playerLine}
+                          onChange={(e) => setPlayerLine(Number(e.target.value))}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Opponent (abbr)</label>
+                        <input
+                          className="input"
+                          value={playerOpponent}
+                          onChange={(e) => setPlayerOpponent(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">American Odds</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={playerOdds}
+                          onChange={(e) => setPlayerOdds(Number(e.target.value))}
+                        />
+                      </div>
+
+                      <div className="grid gap-2">
+                        <label className="label">Stake</label>
+                        <input
+                          className="input"
+                          type="number"
+                          value={playerStake}
+                          onChange={(e) => setPlayerStake(Number(e.target.value))}
+                        />
+                      </div>
                     </div>
+                  )}
+
+                  <div className="mt-6 flex justify-end">
+                    <button className="btn btn-primary" onClick={doSingle} disabled={busy}>
+                      {busy ? "Evaluating..." : "Evaluate"}
+                    </button>
                   </div>
-                )}
-
-                {/* PLAYER MODE */}
-                {betMode === "player" && (
-                  <div className="grid md:grid-cols-2 gap-4">
-                    <div className="grid gap-2">
-                      <label className="label">Player</label>
-                      <input
-                        className="input"
-                        value={playerName}
-                        onChange={(e) => setPlayerName(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <label className="label">Metric</label>
-                      <select
-                        className="input"
-                        value={playerMetric}
-                        onChange={(e) => setPlayerMetric(e.target.value as any)}
-                      >
-                        {PLAYER_METRICS.map((m) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div className="grid gap-2">
-                      <label className="label">Side</label>
-                      <select
-                        className="input"
-                        value={playerOverUnder}
-                        onChange={(e) => setPlayerOverUnder(e.target.value as any)}
-                      >
-                        <option value="over">over</option>
-                        <option value="under">under</option>
-                      </select>
-                    </div>
-
-                    <div className="grid gap-2">
-                      <label className="label">Line</label>
-                      <input
-                        className="input"
-                        type="number"
-                        value={playerLine}
-                        onChange={(e) => setPlayerLine(Number(e.target.value))}
-                      />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <label className="label">Opponent (abbr)</label>
-                      <input
-                        className="input"
-                        value={playerOpponent}
-                        onChange={(e) => setPlayerOpponent(e.target.value)}
-                      />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <label className="label">American Odds</label>
-                      <input
-                        className="input"
-                        type="number"
-                        value={playerOdds}
-                        onChange={(e) => setPlayerOdds(Number(e.target.value))}
-                      />
-                    </div>
-
-                    <div className="grid gap-2">
-                      <label className="label">Stake</label>
-                      <input
-                        className="input"
-                        type="number"
-                        value={playerStake}
-                        onChange={(e) => setPlayerStake(Number(e.target.value))}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                <div className="mt-6 flex justify-end">
-                  <button className="btn btn-primary" onClick={doSingle} disabled={busy}>
-                    {busy ? "Evaluating..." : "Evaluate"}
-                  </button>
                 </div>
-              </div>
+              )}
 
-              {/* PARLAY */}
+              {/* PARLAY (only on tab === 'parlay') */}
               {tab === "parlay" && (
                 <div className="card">
                   <div className="flex items-center justify-between mb-3">
@@ -711,7 +869,7 @@ export default function Page() {
                 </div>
               )}
 
-              {/* BATCH JSON */}
+              {/* BATCH (only on tab === 'batch') */}
               {tab === "batch" && (
                 <div className="card">
                   <div className="flex items-center justify-between mb-3">
@@ -733,7 +891,12 @@ export default function Page() {
                 </div>
               )}
 
-              {/* RESULTS */}
+              {/* DIALOGUE SUMMARY (above results; appears when result exists) */}
+              {result && (
+                <DialogueSummary result={result} />
+              )}
+
+              {/* RESULTS (kept exactly as requested) */}
               <div className="card">
                 <div className="flex items-center gap-2 mb-3">
                   <Info size={16} />
@@ -754,6 +917,7 @@ export default function Page() {
     </>
   );
 }
+
 
 
 
