@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { api, SingleReq, ParlayReq, ParlayResp, SingleResp } from "@/lib/api";
-import { RefreshCw, Percent, Info, TrendingUp, ArrowLeft } from "lucide-react";
+import { RefreshCw, Percent, Info, TrendingUp, ArrowLeft, ChevronDown, ChevronRight } from "lucide-react";
 
 /* ---------------- Helpers ---------------- */
 function impliedFromAmerican(odds: number): number {
@@ -24,7 +24,7 @@ type AnyResult =
   | null;
 
 /* ---------------- Phases ---------------- */
-type Phase = "boot" | "main" | "placebet" | "stats" | "settings";
+type Phase = "boot" | "start" | "main" | "placebet" | "stats" | "settings";
 
 /* ---------------- Bet Modes ---------------- */
 type BetMode = "team" | "player";
@@ -48,14 +48,16 @@ function DialogueBox({
   spriteSrc,
   title,
   lines,
+  large = false,
 }: {
   spriteSrc: string;
   title?: string;
   lines: string[];
+  large?: boolean;
 }) {
   return (
-    <div className="w-full bg-black/60 rounded-xl p-3 border border-white/10 flex gap-3 items-center">
-      <div className="w-14 h-14 rounded-lg overflow-hidden bg-black/40 border border-white/10 shrink-0 flex items-center justify-center">
+    <div className={`w-full ${large ? "bg-black/70" : "bg-black/60"} rounded-2xl p-4 md:p-5 border border-white/10 flex gap-4 items-center`}>
+      <div className={`${large ? "w-20 h-20" : "w-14 h-14"} rounded-xl overflow-hidden bg-black/40 border border-white/10 shrink-0 flex items-center justify-center`}>
         <img
           src={spriteSrc}
           alt={title || "Sprite"}
@@ -64,8 +66,8 @@ function DialogueBox({
         />
       </div>
       <div className="flex-1">
-        {title && <div className="text-sm font-semibold">{title}</div>}
-        <div className="text-xs text-white/80 leading-5">
+        {title && <div className={`font-semibold ${large ? "text-base md:text-lg" : "text-sm"}`}>{title}</div>}
+        <div className={`${large ? "text-sm md:text-base" : "text-xs"} text-white/90 leading-6`}>
           {lines.map((l, i) => (
             <div key={i}>{l}</div>
           ))}
@@ -102,12 +104,12 @@ function DialogueSummary({ result }: { result: AnyResult }) {
       const s0 = b.singles[0];
       const p = tryField(s0, ["probability", "p_win"]);
       const ev = tryField(s0, ["ev", "expected_value"]);
-      lines.push(`Example single → P(win): ${pct01(p)} | EV: ${ev ?? "—"}`);
+      lines.push(`Example single → True odds: ${pct01(p)} | EV: ${ev ?? "—"}`);
     }
     if (pc > 0) {
       const p0 = b.parlays[0];
       const p = tryField(p0, ["probability", "p_win", "combined_probability"]);
-      lines.push(`Example parlay → P(hit): ${pct01(p)}`);
+      lines.push(`Example parlay → True odds: ${pct01(p)}`);
     }
   } else if (isParlay(result)) {
     const p = tryField(result as any, ["probability", "p_win", "combined_probability"]);
@@ -116,11 +118,11 @@ function DialogueSummary({ result }: { result: AnyResult }) {
     const legCount = Array.isArray((result as any).legs)
       ? (result as any).legs.length
       : tryField(result as any, ["leg_count"]) ?? "—";
-    title = "Parlay";
+    title = "Parlay Results";
     lines.push(`Legs: ${legCount}`);
-    lines.push(`P(hit): ${pct01(p)}`);
+    lines.push(`True odds: ${pct01(p)}`);
     if (payout != null) lines.push(`Payout if win: ${payout}`);
-    if (ev != null) lines.push(`EV: ${ev}`);
+    if (ev != null) lines.push(`Expected Value (EV): ${ev}`);
   } else if (isSingle(result)) {
     const p = tryField(result as any, ["probability", "p_win"]);
     const payout = tryField(result as any, ["payout", "payout_if_win"]);
@@ -130,9 +132,9 @@ function DialogueSummary({ result }: { result: AnyResult }) {
     const player = tryField(result as any, ["player"]);
     title = player ? `Single • ${player}` : `Single${market ? ` • ${market}` : ""}`;
     if (team) lines.push(`Team: ${team}`);
-    lines.push(`P(win): ${pct01(p)}`);
+    lines.push(`True odds: ${pct01(p)}`);
     if (payout != null) lines.push(`Payout if win: ${payout}`);
-    if (ev != null) lines.push(`EV: ${ev}`);
+    if (ev != null) lines.push(`Expected Value (EV): ${ev}`);
   } else {
     title = "Result";
     lines.push("Evaluation complete. See details below.");
@@ -143,6 +145,7 @@ function DialogueSummary({ result }: { result: AnyResult }) {
       spriteSrc="/assets/avatars/player.png"
       title={title}
       lines={lines}
+      large
     />
   );
 }
@@ -163,7 +166,7 @@ export default function Page() {
       const p = Math.min(100, Math.round((elapsed / total) * 100));
       setBootProgress(p);
       if (p >= 100) {
-        setPhase("main");
+        setPhase("start");
       } else {
         raf = requestAnimationFrame(tick);
       }
@@ -193,22 +196,35 @@ export default function Page() {
   const [playerOpponent, setPlayerOpponent] = useState<string>("BUF");
   const [playerStake, setPlayerStake] = useState<number>(100);
 
-  // Parlay state kept flexible; narrow locally for UI
+  // Parlay supports mixed legs: team *and* player prop
   const [parlay, setParlay] = useState<any>(() => ({
     legs: [
-      { home_team: "KC", away_team: "CIN", market: "moneyline", pick: "home", american_odds: -135 },
-      { home_team: "PHI", away_team: "DAL", market: "spread", pick: "away", line: +3.5, american_odds: -110 },
+      { leg_type: "team", home_team: "KC", away_team: "CIN", market: "moneyline", pick: "home", american_odds: -135 },
+      { leg_type: "team", home_team: "PHI", away_team: "DAL", market: "spread", pick: "away", line: +3.5, american_odds: -110 },
+      // example player leg (shows UI shape)
+      // { leg_type: "player", player: "Justin Jefferson", prop_kind: "wr_rec_yards", side: "over", line: 89.5, opponent: "GB", american_odds: -115 }
     ],
     stake: 10,
   }));
-  type UILeg = {
-    home_team?: string;
-    away_team?: string;
-    market?: "moneyline" | "spread";
-    pick?: "home" | "away";
-    line?: number;
-    american_odds?: number;
-  };
+  type UILeg =
+    | {
+        leg_type: "team";
+        home_team?: string;
+        away_team?: string;
+        market?: "moneyline" | "spread";
+        pick?: "home" | "away";
+        line?: number;
+        american_odds?: number;
+      }
+    | {
+        leg_type: "player";
+        player?: string;
+        prop_kind?: string;
+        side?: "over" | "under";
+        line?: number;
+        opponent?: string;
+        american_odds?: number;
+      };
   const parlayLegs: UILeg[] = Array.isArray(parlay?.legs) ? (parlay.legs as UILeg[]) : [];
 
   // Batch JSON payload
@@ -219,7 +235,8 @@ export default function Page() {
   "parlays": [
     { "legs": [
       { "market": "moneyline", "team": "KC", "opponent": "CIN", "odds": -135 },
-      { "market": "spread", "team": "DAL", "opponent": "PHI", "spread_line": 3.5, "odds": -110 }
+      { "market": "spread", "team": "DAL", "opponent": "PHI", "spread_line": 3.5, "odds": -110 },
+      { "market": "prop", "player": "Justin Jefferson", "prop_kind": "wr_rec_yards", "side": "over", "line": 89.5, "opponent": "GB", "odds": -115 }
     ], "stake": 10 }
   ]
 }`);
@@ -231,6 +248,7 @@ export default function Page() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<AnyResult>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [showResultDetails, setShowResultDetails] = useState<boolean>(false);
 
   /* ---------- Actions ---------- */
   async function doSingle() {
@@ -270,6 +288,7 @@ export default function Page() {
         const r = await api.single(payload as any);
         setResult(r as AnyResult);
       }
+      setShowResultDetails(false);
     } catch (e: any) {
       setErr(e?.message ?? "Request failed");
     } finally {
@@ -277,13 +296,63 @@ export default function Page() {
     }
   }
 
+  function toParlayPayload(legs: UILeg[], stake: number): ParlayReq {
+    // Build mixed-leg payload for backend: team legs as moneyline/spread; player legs as market: "prop"
+    const builtLegs = legs.map((leg: UILeg) => {
+      if (leg.leg_type === "team") {
+        const t = leg as UILeg & { leg_type: "team" };
+        if (t.market === "moneyline") {
+          // send team/opponent using pick
+          const home = String(t.home_team || "");
+          const away = String(t.away_team || "");
+          const team = t.pick === "home" ? home : away;
+          const opponent = t.pick === "home" ? away : home;
+          return {
+            market: "moneyline",
+            team,
+            opponent,
+            odds: Number(t.american_odds ?? 0),
+            odds_format: "american",
+          };
+        } else {
+          const home = String(t.home_team || "");
+          const away = String(t.away_team || "");
+          const team = t.pick === "home" ? home : away;
+          const opponent = t.pick === "home" ? away : home;
+          return {
+            market: "spread",
+            team,
+            opponent,
+            spread_line: Number(t.line ?? 0),
+            odds: Number(t.american_odds ?? 0),
+            odds_format: "american",
+          };
+        }
+      } else {
+        const p = leg as UILeg & { leg_type: "player" };
+        return {
+          market: "prop",
+          player: String(p.player || ""),
+          prop_kind: String(p.prop_kind || ""),
+          side: p.side ?? "over",
+          line: Number(p.line ?? 0),
+          opponent: String(p.opponent || ""),
+          odds: Number(p.american_odds ?? 0),
+          odds_format: "american",
+        };
+      }
+    });
+    return { legs: builtLegs, stake: Number(stake ?? 0) } as unknown as ParlayReq;
+  }
+
   async function doParlay() {
     try {
       setBusy(true);
       setErr(null);
-      const payload = parlay as ParlayReq;
+      const payload = toParlayPayload(parlayLegs, Number(parlay?.stake ?? 0));
       const r = await api.parlay(payload);
       setResult(r);
+      setShowResultDetails(false);
     } catch (e: any) {
       setErr(e?.message ?? "Request failed");
     } finally {
@@ -298,6 +367,7 @@ export default function Page() {
       const payload = JSON.parse(batchPayload);
       const r = await api.batch(payload);
       setResult(r as AnyResult);
+      setShowResultDetails(false);
     } catch (e: any) {
       setErr(e?.message ?? "Invalid JSON or request failed");
     } finally {
@@ -322,30 +392,34 @@ export default function Page() {
   const [hoverKey, setHoverKey] = useState<MenuKey | null>(null);
   const [focusKey, setFocusKey] = useState<MenuKey | null>(null);
 
-  const menuSprites: Record<MenuKey, { bw: string; color: string; label: string; lines: string[] }> = {
+  const menuSprites: Record<MenuKey, { bw: string; color: string; label: string; lines: string[]; tileBg: string }> = {
     place: {
       bw: "/assets/icons/money-bag-bw.png",
       color: "/assets/icons/money-bag-color.png",
       label: "Place Bet",
-      lines: ["Simulate singles, parlays, and batch slips.", "See true probabilities and EV in real time."],
+      lines: ["Simulate singles, parlays, and batch slips.", "See true odds and EV instantly."],
+      tileBg: "bg-emerald-600/30",
     },
     stats: {
       bw: "/assets/icons/stats-graph-bw.png",
       color: "/assets/icons/stats-graph-color.png",
       label: "My Stats",
-      lines: ["View your session totals and hit rates.", "Track EV and profit over time."],
+      lines: ["Session totals & hit rates.", "Track EV and profit over time."],
+      tileBg: "bg-sky-600/30",
     },
     settings: {
       bw: "/assets/icons/settings-gear-bw.png",
       color: "/assets/icons/settings-gear-color.png",
       label: "Settings",
-      lines: ["Refresh weekly stats and adjust preferences.", "Manage display & data options."],
+      lines: ["Refresh weekly stats.", "Manage UI & data options."],
+      tileBg: "bg-violet-600/30",
     },
     exit: {
       bw: "/assets/icons/exit-stop-bw.png",
       color: "/assets/icons/exit-stop-color.png",
       label: "Exit",
-      lines: ["Return to main menu splash.", "You can always come back to play!"],
+      lines: ["Return to Start screen.", "You can always come back!"],
+      tileBg: "bg-rose-600/30",
     },
   };
 
@@ -355,11 +429,11 @@ export default function Page() {
     if (k === "stats") setPhase("stats");
     if (k === "settings") setPhase("settings");
     if (k === "exit") {
-      // Soft "exit": reset to main menu splash state
+      // Exit returns to START menu (not main)
       setResult(null);
       setErr(null);
       setTab("single");
-      setPhase("main");
+      setPhase("start");
     }
   }
 
@@ -378,8 +452,8 @@ export default function Page() {
       {phase === "boot" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
           <div className="text-center">
-            {/* LOGO above progress bar */}
-            <div className="mx-auto w-28 h-28 mb-4 flex items-center justify-center">
+            {/* BIGGER LOGO above progress bar */}
+            <div className="mx-auto w-56 h-56 mb-5 flex items-center justify-center">
               <img
                 src="/assets/pixel/logo/best-bet-nfl.png"
                 alt="Best Bet NFL"
@@ -396,6 +470,24 @@ export default function Page() {
         </div>
       )}
 
+      {/* START MENU */}
+      {phase === "start" && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
+          <div className="text-center space-y-6">
+            <div className="mx-auto w-44 h-44">
+              <img
+                src="/assets/pixel/logo/best-bet-nfl.png"
+                alt="Best Bet NFL"
+                className="object-contain w-full h-full"
+                onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+              />
+            </div>
+            <div className="text-4xl font-extrabold">Best Bet NFL</div>
+            <button className="btn btn-primary" onClick={() => setPhase("main")}>Start</button>
+          </div>
+        </div>
+      )}
+
       {/* MAIN MENU with 4 sprites */}
       {phase === "main" && (
         <div
@@ -405,12 +497,22 @@ export default function Page() {
           <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.35),rgba(0,0,0,0.85))]" />
 
           <div className="relative container mx-auto px-4 py-10">
+            {/* Best Bet logo above options */}
+            <div className="mx-auto w-40 h-40 mb-4 flex items-center justify-center">
+              <img
+                src="/assets/pixel/logo/best-bet-nfl.png"
+                alt="Best Bet NFL"
+                className="object-contain w-full h-full"
+                onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+              />
+            </div>
+
             <div className="flex items-center gap-3 text-white/80 text-sm mb-4">
               <TrendingUp size={16} />
               <span>Best Bet NFL</span>
             </div>
 
-            <h1 className="text-2xl md:text-3xl font-bold text-white mb-6">Main Menu</h1>
+            <h1 className="text-2xl md:text-3xl font-bold text-white mb-6 text-center">Main Menu</h1>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
               {(["place", "stats", "settings", "exit"] as MenuKey[]).map((k) => {
@@ -420,14 +522,14 @@ export default function Page() {
                 return (
                   <button
                     key={k}
-                    className="group bg-black/40 border border-white/10 rounded-2xl p-4 hover:border-white/30 focus:border-white/30 transition"
+                    className={`group ${s.tileBg} border border-white/10 rounded-2xl p-4 hover:border-white/30 focus:border-white/30 transition`}
                     onMouseEnter={() => setHoverKey(k)}
                     onMouseLeave={() => setHoverKey(null)}
                     onFocus={() => setFocusKey(k)}
                     onBlur={() => setFocusKey(null)}
                     onClick={() => selectMenu(k)}
                   >
-                    <div className="w-full aspect-square rounded-xl bg-black/30 overflow-hidden mb-3 flex items-center justify-center">
+                    <div className="w-full aspect-square rounded-xl bg-black/40 overflow-hidden mb-3 flex items-center justify-center">
                       <img
                         src={src}
                         alt={s.label}
@@ -442,7 +544,7 @@ export default function Page() {
             </div>
 
             {/* Dialogue box below sprites with matching prompt & colored sprite */}
-            <div className="mt-6 max-w-3xl">
+            <div className="mt-6 max-w-3xl mx-auto">
               {(() => {
                 const k = hoverKey ?? focusKey ?? ("place" as MenuKey);
                 const s = menuSprites[k];
@@ -475,7 +577,7 @@ export default function Page() {
               </div>
               <h1 className="text-2xl md:text-3xl font-bold mt-2">Betting Simulator & True Odds Engine</h1>
               <p className="text-white/70 max-w-3xl mt-2">
-                Simulate singles, parlays, or batch slips and see true probabilities (0.01% precision) and EV.
+                Simulate singles, parlays (now with team + player props mixed), or batch slips. See true odds (0.01% precision) and EV.
               </p>
               <div className="mt-4 flex gap-2">
                 <button className="btn" onClick={() => setPhase("main")}>
@@ -500,7 +602,7 @@ export default function Page() {
                   Single / Moneyline / Spread / Player
                 </button>
                 <button className={`btn ${tab === "parlay" ? "btn-primary" : ""}`} onClick={() => setTab("parlay")}>
-                  Parlay
+                  Parlay (Team + Player)
                 </button>
                 <button className={`btn ${tab === "batch" ? "btn-primary" : ""}`} onClick={() => setTab("batch")}>
                   Batch JSON
@@ -702,11 +804,11 @@ export default function Page() {
                 </div>
               )}
 
-              {/* PARLAY */}
+              {/* PARLAY (Mixed legs) */}
               {tab === "parlay" && (
                 <div className="card">
                   <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-lg font-semibold">Parlay</h2>
+                    <h2 className="text-lg font-semibold">Parlay (Team + Player Props)</h2>
                     <button className="btn btn-primary" onClick={doParlay} disabled={busy}>
                       {busy ? "Evaluating..." : "Evaluate Parlay"}
                     </button>
@@ -714,112 +816,282 @@ export default function Page() {
 
                   <div className="grid gap-4">
                     {parlayLegs.map((leg, idx) => (
-                      <div key={idx} className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
-                        <div>
-                          <label className="label">Home</label>
-                          <input
-                            className="input"
-                            value={leg.home_team ?? ""}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setParlay((p: any) => {
-                                const next = { ...p };
-                                next.legs = [...parlayLegs];
-                                next.legs[idx] = { ...parlayLegs[idx], home_team: v };
-                                return next;
-                              });
-                            }}
-                          />
-                        </div>
-                        <div>
-                          <label className="label">Away</label>
-                          <input
-                            className="input"
-                            value={leg.away_team ?? ""}
-                            onChange={(e) => {
-                              const v = e.target.value;
-                              setParlay((p: any) => {
-                                const next = { ...p };
-                                next.legs = [...parlayLegs];
-                                next.legs[idx] = { ...parlayLegs[idx], away_team: v };
-                                return next;
-                              });
-                            }}
-                          />
-                        </div>
-                        <div>
-                          <label className="label">Market</label>
+                      <div key={idx} className="grid grid-cols-1 gap-3 p-3 rounded-xl bg-black/40 border border-white/10">
+                        {/* Leg type switch */}
+                        <div className="flex items-center gap-2">
+                          <label className="label">Leg Type</label>
                           <select
-                            className="input"
-                            value={leg.market ?? "moneyline"}
+                            className="input w-44"
+                            value={leg.leg_type}
                             onChange={(e) => {
-                              const v = e.target.value as UILeg["market"];
+                              const v = e.target.value as "team" | "player";
                               setParlay((p: any) => {
                                 const next = { ...p };
-                                next.legs = [...parlayLegs];
-                                next.legs[idx] = { ...parlayLegs[idx], market: v };
+                                const copy = [...parlayLegs];
+                                copy[idx] =
+                                  v === "team"
+                                    ? { leg_type: "team", home_team: "", away_team: "", market: "moneyline", pick: "home", line: 0, american_odds: 0 }
+                                    : { leg_type: "player", player: "", prop_kind: "wr_rec_yards", side: "over", line: 0, opponent: "", american_odds: 0 };
+                                next.legs = copy;
                                 return next;
                               });
                             }}
                           >
-                            <option value="moneyline">moneyline</option>
-                            <option value="spread">spread</option>
+                            <option value="team">Team</option>
+                            <option value="player">Player</option>
                           </select>
                         </div>
-                        <div>
-                          <label className="label">Pick</label>
-                          <select
-                            className="input"
-                            value={leg.pick ?? "home"}
-                            onChange={(e) => {
-                              const v = e.target.value as UILeg["pick"];
+
+                        {/* TEAM LEG FIELDS */}
+                        {leg.leg_type === "team" && (
+                          <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+                            <div>
+                              <label className="label">Home</label>
+                              <input
+                                className="input"
+                                value={(leg as any).home_team ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).home_team = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <label className="label">Away</label>
+                              <input
+                                className="input"
+                                value={(leg as any).away_team ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).away_team = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <label className="label">Market</label>
+                              <select
+                                className="input"
+                                value={(leg as any).market ?? "moneyline"}
+                                onChange={(e) => {
+                                  const v = e.target.value as "moneyline" | "spread";
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).market = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <option value="moneyline">moneyline</option>
+                                <option value="spread">spread</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="label">Pick</label>
+                              <select
+                                className="input"
+                                value={(leg as any).pick ?? "home"}
+                                onChange={(e) => {
+                                  const v = e.target.value as "home" | "away";
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).pick = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <option value="home">home</option>
+                                <option value="away">away</option>
+                              </select>
+                            </div>
+                            {(leg as any).market === "spread" && (
+                              <div>
+                                <label className="label">Line</label>
+                                <input
+                                  className="input"
+                                  type="number"
+                                  value={Number((leg as any).line ?? 0)}
+                                  onChange={(e) => {
+                                    const v = Number(e.target.value);
+                                    setParlay((p: any) => {
+                                      const next = { ...p };
+                                      const copy = [...parlayLegs];
+                                      (copy[idx] as any).line = v;
+                                      next.legs = copy;
+                                      return next;
+                                    });
+                                  }}
+                                />
+                              </div>
+                            )}
+                            <div>
+                              <label className="label">American Odds</label>
+                              <input
+                                className="input"
+                                type="number"
+                                value={Number((leg as any).american_odds ?? 0)}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).american_odds = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        {/* PLAYER LEG FIELDS */}
+                        {leg.leg_type === "player" && (
+                          <div className="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+                            <div className="md:col-span-2">
+                              <label className="label">Player</label>
+                              <input
+                                className="input"
+                                value={(leg as any).player ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).player = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <label className="label">Prop Kind</label>
+                              <select
+                                className="input"
+                                value={(leg as any).prop_kind ?? "wr_rec_yards"}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).prop_kind = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              >
+                                {Object.values(PROP_KIND_BY_LABEL).map((k) => (
+                                  <option key={k} value={k}>{k}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label className="label">Side</label>
+                              <select
+                                className="input"
+                                value={(leg as any).side ?? "over"}
+                                onChange={(e) => {
+                                  const v = e.target.value as "over" | "under";
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).side = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              >
+                                <option value="over">over</option>
+                                <option value="under">under</option>
+                              </select>
+                            </div>
+                            <div>
+                              <label className="label">Line</label>
+                              <input
+                                className="input"
+                                type="number"
+                                value={Number((leg as any).line ?? 0)}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).line = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <label className="label">Opponent (abbr)</label>
+                              <input
+                                className="input"
+                                value={(leg as any).opponent ?? ""}
+                                onChange={(e) => {
+                                  const v = e.target.value;
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).opponent = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <label className="label">American Odds</label>
+                              <input
+                                className="input"
+                                type="number"
+                                value={Number((leg as any).american_odds ?? 0)}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  setParlay((p: any) => {
+                                    const next = { ...p };
+                                    const copy = [...parlayLegs];
+                                    (copy[idx] as any).american_odds = v;
+                                    next.legs = copy;
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="flex justify-between">
+                          <button
+                            className="btn"
+                            onClick={() =>
                               setParlay((p: any) => {
                                 const next = { ...p };
-                                next.legs = [...parlayLegs];
-                                next.legs[idx] = { ...parlayLegs[idx], pick: v };
+                                const copy = [...parlayLegs];
+                                copy.splice(idx + 1, 0, { leg_type: leg.leg_type } as any);
+                                next.legs = copy;
                                 return next;
-                              });
-                            }}
+                              })
+                            }
                           >
-                            <option value="home">home</option>
-                            <option value="away">away</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label className="label">Line (for spread)</label>
-                          <input
-                            className="input"
-                            type="number"
-                            value={Number(leg.line ?? 0)}
-                            onChange={(e) => {
-                              const v = Number(e.target.value);
-                              setParlay((p: any) => {
-                                const next = { ...p };
-                                next.legs = [...parlayLegs];
-                                next.legs[idx] = { ...parlayLegs[idx], line: v };
-                                return next;
-                              });
-                            }}
-                          />
-                        </div>
-                        <div>
-                          <label className="label">American Odds</label>
-                          <input
-                            className="input"
-                            type="number"
-                            value={Number(leg.american_odds ?? 0)}
-                            onChange={(e) => {
-                              const v = Number(e.target.value);
-                              setParlay((p: any) => {
-                                const next = { ...p };
-                                next.legs = [...parlayLegs];
-                                next.legs[idx] = { ...parlayLegs[idx], american_odds: v };
-                                return next;
-                              });
-                            }}
-                          />
-                        </div>
-                        <div className="md:col-span-6 flex justify-end">
+                            + Duplicate below
+                          </button>
                           <button
                             className="btn btn-secondary"
                             onClick={() =>
@@ -837,27 +1109,38 @@ export default function Page() {
                     ))}
 
                     <div className="flex items-center justify-between">
-                      <button
-                        className="btn"
-                        onClick={() =>
-                          setParlay((p: any) => {
-                            const next = { ...p };
-                            next.legs = [
-                              ...parlayLegs,
-                              {
-                                home_team: "NYJ",
-                                away_team: "BUF",
-                                market: "moneyline",
-                                pick: "home",
-                                american_odds: -110,
-                              },
-                            ];
-                            return next;
-                          })
-                        }
-                      >
-                        + Add leg
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          className="btn"
+                          onClick={() =>
+                            setParlay((p: any) => {
+                              const next = { ...p };
+                              next.legs = [
+                                ...parlayLegs,
+                                { leg_type: "team", home_team: "NYJ", away_team: "BUF", market: "moneyline", pick: "home", american_odds: -110 },
+                              ];
+                              return next;
+                            })
+                          }
+                        >
+                          + Add Team leg
+                        </button>
+                        <button
+                          className="btn"
+                          onClick={() =>
+                            setParlay((p: any) => {
+                              const next = { ...p };
+                              next.legs = [
+                                ...parlayLegs,
+                                { leg_type: "player", player: "", prop_kind: "wr_rec_yards", side: "over", line: 0, opponent: "", american_odds: -110 },
+                              ];
+                              return next;
+                            })
+                          }
+                        >
+                          + Add Player leg
+                        </button>
+                      </div>
 
                       <div className="flex items-center gap-2">
                         <label className="label">Stake</label>
@@ -892,7 +1175,7 @@ export default function Page() {
                   />
 
                   <div className="text-xs text-white/60 mt-2">
-                    Tip: Provide keys <code>singles</code> and <code>parlays</code>. See <code>/examples/sample_batch.json</code>.
+                    Tip: Include both team and player legs in <code>parlays[].legs</code> using <code>"market": "moneyline" | "spread" | "prop"</code>.
                   </div>
                 </div>
               )}
@@ -900,15 +1183,28 @@ export default function Page() {
               {/* DIALOGUE SUMMARY (above results; appears when result exists) */}
               {result && <DialogueSummary result={result} />}
 
-              {/* RESULTS (keep as-is) */}
+              {/* Collapsible RESULTS */}
               <div className="card">
-                <div className="flex items-center gap-2 mb-3">
-                  <Info size={16} />
-                  <h2 className="text-lg font-semibold">Result</h2>
-                </div>
-                <pre className="bg-black/50 p-3 rounded overflow-auto text-sm">
-                  {err ? `Error: ${err}` : JSON.stringify(result, null, 2)}
-                </pre>
+                <button
+                  className="w-full flex items-center justify-between mb-2 text-left"
+                  onClick={() => setShowResultDetails((v) => !v)}
+                >
+                  <div className="flex items-center gap-2">
+                    <Info size={16} />
+                    <h2 className="text-lg font-semibold">Raw Calculation Details</h2>
+                  </div>
+                  {showResultDetails ? <ChevronDown /> : <ChevronRight />}
+                </button>
+                {showResultDetails && (
+                  <pre className="bg-black/50 p-3 rounded overflow-auto text-sm">
+                    {err ? `Error: ${err}` : JSON.stringify(result, null, 2)}
+                  </pre>
+                )}
+                {!showResultDetails && (
+                  <div className="text-xs text-white/60">
+                    Click to expand raw JSON results (probability inputs, payouts, EV breakdowns).
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -973,6 +1269,7 @@ export default function Page() {
     </>
   );
 }
+
 
 
 
