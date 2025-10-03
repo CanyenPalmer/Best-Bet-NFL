@@ -22,6 +22,25 @@ All delivered inside a **retro, Pokémon-inspired menu interface**, making betti
 
 ---
 
+## Tech Stack
+
+**Frontend & UX**  
+- **Next.js 14 & React** → Modular, production-grade frontend.  
+- **Tailwind CSS + Framer Motion** → Retro animations, HUD transitions.  
+- **Custom Pixel-Art Assets** → Football fields, avatars, menus.  
+
+**Backend & Analytics**  
+- **Python (Pandas, NumPy, SciPy)** → Probability modeling & stats.  
+- **Custom Odds Engine** → Handles singles, parlays, and batch slips.  
+- **Node.js/Express API** → Links Python engine to the frontend.  
+
+**Deployment & Infrastructure**  
+- **Vercel** → Live frontend with continuous deployment.  
+- **GitHub Actions** → Automated testing/build pipeline.  
+- **Scalable Config System** → Player data & odds models easy to maintain.  
+
+---
+
 ## Features
 
 ### ✅ Supported Markets
@@ -65,25 +84,6 @@ All delivered inside a **retro, Pokémon-inspired menu interface**, making betti
 - **Variance-Aware**  
   - Factors in usage shifts (injuries, new roles, game scripts).  
   - Simulates *true volatility* instead of static averages.  
-
----
-
-## Tech Stack
-
-**Frontend & UX**  
-- **Next.js 14 & React** → Modular, production-grade frontend.  
-- **Tailwind CSS + Framer Motion** → Retro animations, HUD transitions.  
-- **Custom Pixel-Art Assets** → Football fields, avatars, menus.  
-
-**Backend & Analytics**  
-- **Python (Pandas, NumPy, SciPy)** → Probability modeling & stats.  
-- **Custom Odds Engine** → Handles singles, parlays, and batch slips.  
-- **Node.js/Express API** → Links Python engine to the frontend.  
-
-**Deployment & Infrastructure**  
-- **Vercel** → Live frontend with continuous deployment.  
-- **GitHub Actions** → Automated testing/build pipeline.  
-- **Scalable Config System** → Player data & odds models easy to maintain.  
 
 ---
 
