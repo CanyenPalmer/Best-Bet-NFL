@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api, SingleReq, ParlayReq, ParlayResp, SingleResp } from "@/lib/api";
 import { RefreshCw, Percent, Info, TrendingUp, ArrowLeft } from "lucide-react";
 
-/* ---------- helpers ---------- */
+/* ---------------- Helpers ---------------- */
 function impliedFromAmerican(odds: number): number {
   const ao = Number(odds);
-  if (Number.isNaN(ao)) return 0.5;
+  if (!Number.isFinite(ao)) return 0.5;
   return ao >= 0 ? 100 / (ao + 100) : Math.abs(ao) / (Math.abs(ao) + 100);
 }
 function pct01(n: number | undefined | null) {
@@ -15,6 +15,7 @@ function pct01(n: number | undefined | null) {
   const p = Math.max(0, Math.min(1, Number(n)));
   return `${(p * 100).toFixed(2)}%`;
 }
+
 type Tab = "single" | "parlay" | "batch";
 type AnyResult =
   | SingleResp
@@ -22,13 +23,13 @@ type AnyResult =
   | { singles: SingleResp[]; parlays: ParlayResp[] }
   | null;
 
-/* ---------- overlay phases ---------- */
-type Phase = "boot" | "landing" | "home" | "main" | "menu";
+/* ---------------- Phases ---------------- */
+type Phase = "boot" | "main" | "placebet" | "stats" | "settings";
 
-/* ---------- bet modes ---------- */
+/* ---------------- Bet Modes ---------------- */
 type BetMode = "team" | "player";
 
-/* ---------- player metric → prop_kind mapping ---------- */
+/* ---------------- Player metric → prop_kind ---------------- */
 const PROP_KIND_BY_LABEL: Record<string, string> = {
   "Passing Yards": "qb_pass_yards",
   "Passing TDs": "qb_pass_tds",
@@ -40,32 +41,57 @@ const PROP_KIND_BY_LABEL: Record<string, string> = {
   "Receiving Yards": "wr_rec_yards",
   "Receiving TDs": "wr_rec_tds",
 } as const;
-
 const PLAYER_METRICS = Object.keys(PROP_KIND_BY_LABEL) as (keyof typeof PROP_KIND_BY_LABEL)[];
 
-/* ---------- dialogue summary (uses sprite) ---------- */
+/* ---------------- Generic Dialogue Box (sprite + prompt) ---------------- */
+function DialogueBox({
+  spriteSrc,
+  title,
+  lines,
+}: {
+  spriteSrc: string;
+  title?: string;
+  lines: string[];
+}) {
+  return (
+    <div className="w-full bg-black/60 rounded-xl p-3 border border-white/10 flex gap-3 items-center">
+      <div className="w-14 h-14 rounded-lg overflow-hidden bg-black/40 border border-white/10 shrink-0 flex items-center justify-center">
+        <img
+          src={spriteSrc}
+          alt={title || "Sprite"}
+          className="object-contain w-full h-full"
+          onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+        />
+      </div>
+      <div className="flex-1">
+        {title && <div className="text-sm font-semibold">{title}</div>}
+        <div className="text-xs text-white/80 leading-5">
+          {lines.map((l, i) => (
+            <div key={i}>{l}</div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------- Evaluation Dialogue Summary ---------------- */
 function DialogueSummary({ result }: { result: AnyResult }) {
   if (!result) return null;
-
-  // Try to detect shape and produce a friendly summary
-  const lines: string[] = [];
-  let title = "Evaluation Summary";
 
   const tryField = (obj: any, keys: string[]) => {
     for (const k of keys) if (obj && obj[k] != null) return obj[k];
     return undefined;
   };
 
-  const asSingle = (r: any) =>
-    r && (typeof r === "object") && ("probability" in r || "p_win" in r);
+  const isBatch = (r: any) => r && (typeof r === "object") && ("singles" in r || "parlays" in r);
+  const isParlay = (r: any) => r && (typeof r === "object") && ("legs" in r || "combined" in r || "parlay" in r);
+  const isSingle = (r: any) => r && (typeof r === "object") && ("probability" in r || "p_win" in r);
 
-  const asParlay = (r: any) =>
-    r && (typeof r === "object") && ("legs" in r || "combined" in r || "parlay" in r);
+  const lines: string[] = [];
+  let title = "Evaluation Summary";
 
-  const asBatch = (r: any) =>
-    r && (typeof r === "object") && ("singles" in r || "parlays" in r);
-
-  if (asBatch(result)) {
+  if (isBatch(result)) {
     const b: any = result;
     const sc = Array.isArray(b.singles) ? b.singles.length : 0;
     const pc = Array.isArray(b.parlays) ? b.parlays.length : 0;
@@ -73,28 +99,29 @@ function DialogueSummary({ result }: { result: AnyResult }) {
     lines.push(`Singles evaluated: ${sc}`);
     lines.push(`Parlays evaluated: ${pc}`);
     if (sc > 0) {
-      const first = b.singles[0];
-      const p = tryField(first, ["probability", "p_win"]);
-      const ev = tryField(first, ["ev", "expected_value"]);
+      const s0 = b.singles[0];
+      const p = tryField(s0, ["probability", "p_win"]);
+      const ev = tryField(s0, ["ev", "expected_value"]);
       lines.push(`Example single → P(win): ${pct01(p)} | EV: ${ev ?? "—"}`);
     }
     if (pc > 0) {
-      const first = b.parlays[0];
-      const p = tryField(first, ["probability", "p_win", "combined_probability"]);
+      const p0 = b.parlays[0];
+      const p = tryField(p0, ["probability", "p_win", "combined_probability"]);
       lines.push(`Example parlay → P(hit): ${pct01(p)}`);
     }
-  } else if (asParlay(result)) {
+  } else if (isParlay(result)) {
     const p = tryField(result as any, ["probability", "p_win", "combined_probability"]);
     const payout = tryField(result as any, ["payout", "payout_if_win"]);
     const ev = tryField(result as any, ["ev", "expected_value"]);
-    const legCount =
-      Array.isArray((result as any).legs) ? (result as any).legs.length : tryField(result as any, ["leg_count"]) ?? "—";
+    const legCount = Array.isArray((result as any).legs)
+      ? (result as any).legs.length
+      : tryField(result as any, ["leg_count"]) ?? "—";
     title = "Parlay";
     lines.push(`Legs: ${legCount}`);
     lines.push(`P(hit): ${pct01(p)}`);
     if (payout != null) lines.push(`Payout if win: ${payout}`);
     if (ev != null) lines.push(`EV: ${ev}`);
-  } else if (asSingle(result)) {
+  } else if (isSingle(result)) {
     const p = tryField(result as any, ["probability", "p_win"]);
     const payout = tryField(result as any, ["payout", "payout_if_win"]);
     const ev = tryField(result as any, ["ev", "expected_value"]);
@@ -112,37 +139,20 @@ function DialogueSummary({ result }: { result: AnyResult }) {
   }
 
   return (
-    <div className="w-full bg-black/60 rounded-xl p-3 border border-white/10 flex gap-3 items-center">
-      <div className="w-14 h-14 rounded-lg overflow-hidden bg-black/40 border border-white/10 shrink-0 flex items-center justify-center">
-        {/* Player sprite in the dialogue photo box */}
-        {/* Ensure /assets/ui/player-sprite.png exists; otherwise this gracefully stays blank */}
-        <img
-          src="/assets/ui/player-sprite.png"
-          alt="Player"
-          className="object-contain w-full h-full"
-          onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = "none";
-          }}
-        />
-      </div>
-      <div className="flex-1">
-        <div className="text-sm font-semibold">{title}</div>
-        <div className="text-xs text-white/80 leading-5">
-          {lines.map((l, i) => (
-            <div key={i}>{l}</div>
-          ))}
-        </div>
-      </div>
-    </div>
+    <DialogueBox
+      spriteSrc="/assets/avatars/player.png"
+      title={title}
+      lines={lines}
+    />
   );
 }
 
-/* ---------- page ---------- */
+/* ---------------- Page ---------------- */
 export default function Page() {
+  /* Boot */
   const [phase, setPhase] = useState<Phase>("boot");
   const [bootProgress, setBootProgress] = useState(0);
 
-  /* Boot progress → landing → home (Start) */
   useEffect(() => {
     if (phase !== "boot") return;
     const total = 2250;
@@ -153,9 +163,7 @@ export default function Page() {
       const p = Math.min(100, Math.round((elapsed / total) * 100));
       setBootProgress(p);
       if (p >= 100) {
-        setPhase("landing");
-        const id = setTimeout(() => setPhase("home"), 650);
-        return () => clearTimeout(id);
+        setPhase("main");
       } else {
         raf = requestAnimationFrame(tick);
       }
@@ -164,7 +172,7 @@ export default function Page() {
     return () => cancelAnimationFrame(raf);
   }, [phase]);
 
-  /* ---------- Single bet UI state ---------- */
+  /* ---------- Betting UI state ---------- */
   const [single, setSingle] = useState<SingleReq>(() => ({
     home_team: "PIT",
     away_team: "BAL",
@@ -174,8 +182,6 @@ export default function Page() {
     line: 0,
     stake: 100,
   } as unknown as SingleReq));
-
-  /* Player prop UI */
   const [betMode, setBetMode] = useState<BetMode>("team");
   const [playerName, setPlayerName] = useState<string>("Patrick Mahomes");
   const [playerMetric, setPlayerMetric] =
@@ -187,24 +193,11 @@ export default function Page() {
   const [playerOpponent, setPlayerOpponent] = useState<string>("BUF");
   const [playerStake, setPlayerStake] = useState<number>(100);
 
-  /* Parlay (UI state) – flexible, narrow locally for UI */
+  // Parlay state kept flexible; narrow locally for UI
   const [parlay, setParlay] = useState<any>(() => ({
     legs: [
-      {
-        home_team: "KC",
-        away_team: "CIN",
-        market: "moneyline",
-        pick: "home",
-        american_odds: -135,
-      },
-      {
-        home_team: "PHI",
-        away_team: "DAL",
-        market: "spread",
-        pick: "away",
-        line: +3.5,
-        american_odds: -110,
-      },
+      { home_team: "KC", away_team: "CIN", market: "moneyline", pick: "home", american_odds: -135 },
+      { home_team: "PHI", away_team: "DAL", market: "spread", pick: "away", line: +3.5, american_odds: -110 },
     ],
     stake: 10,
   }));
@@ -218,7 +211,7 @@ export default function Page() {
   };
   const parlayLegs: UILeg[] = Array.isArray(parlay?.legs) ? (parlay.legs as UILeg[]) : [];
 
-  /* Batch JSON payload */
+  // Batch JSON payload
   const [batchPayload, setBatchPayload] = useState<string>(`{
   "singles": [
     { "market": "moneyline", "team": "PIT", "opponent": "BAL", "odds": -120, "stake": 100 }
@@ -231,20 +224,15 @@ export default function Page() {
   ]
 }`);
 
-  /* UI tabs */
+  /* Tabs for Place Bet */
   const [tab, setTab] = useState<Tab>("single");
 
-  /* busy/result/error */
+  /* Busy/result/error */
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<AnyResult>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  function clampNum(n: any, fallback = 0) {
-    const x = Number(n);
-    return Number.isFinite(x) ? x : fallback;
-  }
-
-  /* ---------- actions ---------- */
+  /* ---------- Actions ---------- */
   async function doSingle() {
     try {
       setBusy(true);
@@ -263,23 +251,8 @@ export default function Page() {
 
         const payload: any =
           mkt === "moneyline"
-            ? {
-                market: "moneyline",
-                team,
-                opponent,
-                odds,
-                stake,
-                odds_format: "american",
-              }
-            : {
-                market: "spread",
-                team,
-                opponent,
-                spread_line: Number((single as any).line ?? 0),
-                odds,
-                stake,
-                odds_format: "american",
-              };
+            ? { market: "moneyline", team, opponent, odds, stake, odds_format: "american" }
+            : { market: "spread", team, opponent, spread_line: Number((single as any).line ?? 0), odds, stake, odds_format: "american" };
 
         const r = await api.single(payload);
         setResult(r);
@@ -344,8 +317,54 @@ export default function Page() {
     }
   }
 
-  /* ---------- dynamic background per view ---------- */
-  const heroBg =
+  /* ---------- Main Menu Sprites ---------- */
+  type MenuKey = "place" | "stats" | "settings" | "exit";
+  const [hoverKey, setHoverKey] = useState<MenuKey | null>(null);
+  const [focusKey, setFocusKey] = useState<MenuKey | null>(null);
+
+  const menuSprites: Record<MenuKey, { bw: string; color: string; label: string; lines: string[] }> = {
+    place: {
+      bw: "/assets/icons/money-bag-bw.png",
+      color: "/assets/icons/money-bag-color.png",
+      label: "Place Bet",
+      lines: ["Simulate singles, parlays, and batch slips.", "See true probabilities and EV in real time."],
+    },
+    stats: {
+      bw: "/assets/icons/stats-graph-bw.png",
+      color: "/assets/icons/stats-graph-color.png",
+      label: "My Stats",
+      lines: ["View your session totals and hit rates.", "Track EV and profit over time."],
+    },
+    settings: {
+      bw: "/assets/icons/settings-gear-bw.png",
+      color: "/assets/icons/settings-gear-color.png",
+      label: "Settings",
+      lines: ["Refresh weekly stats and adjust preferences.", "Manage display & data options."],
+    },
+    exit: {
+      bw: "/assets/icons/exit-stop-bw.png",
+      color: "/assets/icons/exit-stop-color.png",
+      label: "Exit",
+      lines: ["Return to main menu splash.", "You can always come back to play!"],
+    },
+  };
+
+  function selectMenu(k: MenuKey) {
+    setFocusKey(k);
+    if (k === "place") setPhase("placebet");
+    if (k === "stats") setPhase("stats");
+    if (k === "settings") setPhase("settings");
+    if (k === "exit") {
+      // Soft "exit": reset to main menu splash state
+      setResult(null);
+      setErr(null);
+      setTab("single");
+      setPhase("main");
+    }
+  }
+
+  /* ---------- Dynamic backgrounds ---------- */
+  const placeBg =
     tab === "single"
       ? "/assets/bg/bg-betting.png"
       : tab === "batch"
@@ -355,107 +374,98 @@ export default function Page() {
   /* ---------- RENDER ---------- */
   return (
     <>
-      {/* Overlays / Flow control */}
-      {phase !== "menu" && (
+      {/* BOOT */}
+      {phase === "boot" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black">
-          {phase === "boot" && (
-            <div className="text-center">
-              {/* LOGO */}
-              <div className="mx-auto w-28 h-28 mb-4 flex items-center justify-center">
-                <img
-                  src="/assets/brand/logo.png"
-                  alt="Best Bet NFL"
-                  className="object-contain w-full h-full"
-                  onError={(e) => {
-                    // fallback: render text if logo doesn't exist
-                    (e.currentTarget as HTMLImageElement).style.display = "none";
-                  }}
-                />
-              </div>
-              <div className="text-2xl font-bold mb-4">Best Bet NFL</div>
-              <div className="w-64 h-3 bg-white/10 rounded overflow-hidden mx-auto">
-                <div className="h-full bg-white" style={{ width: `${bootProgress}%` }} />
-              </div>
-              <div className="text-white/60 text-sm mt-2">Loading... {bootProgress}%</div>
+          <div className="text-center">
+            {/* LOGO above progress bar */}
+            <div className="mx-auto w-28 h-28 mb-4 flex items-center justify-center">
+              <img
+                src="/assets/pixel/logo/best-bet-nfl.png"
+                alt="Best Bet NFL"
+                className="object-contain w-full h-full"
+                onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+              />
             </div>
-          )}
-
-          {phase === "landing" && (
-            <div className="text-center space-y-4">
-              <div className="mx-auto w-32 h-32">
-                <img
-                  src="/assets/brand/logo.png"
-                  alt="Best Bet NFL"
-                  className="object-contain w-full h-full"
-                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                />
-              </div>
-              <div className="text-3xl font-bold tracking-wide">Best Bet NFL</div>
-              <div className="text-white/70">Press Start to continue</div>
+            <div className="text-2xl font-bold mb-4">Best Bet NFL</div>
+            <div className="w-64 h-3 bg-white/10 rounded overflow-hidden mx-auto">
+              <div className="h-full bg-white" style={{ width: `${bootProgress}%` }} />
             </div>
-          )}
-
-          {phase === "home" && (
-            <div className="text-center space-y-5">
-              <div className="mx-auto w-32 h-32">
-                <img
-                  src="/assets/brand/logo.png"
-                  alt="Best Bet NFL"
-                  className="object-contain w-full h-full"
-                  onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
-                />
-              </div>
-              <div className="text-4xl font-extrabold">Best Bet NFL</div>
-              <button className="btn btn-primary" onClick={() => setPhase("main")}>Start</button>
-            </div>
-          )}
-
-          {phase === "main" && (
-            <div className="w-full px-6">
-              <div className="max-w-xl mx-auto bg-black/60 rounded-2xl p-6 border border-white/10">
-                <div className="text-center text-xl font-bold mb-4">Main Menu</div>
-                <div className="grid gap-3">
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => {
-                      setTab("single");
-                      setPhase("menu");
-                    }}
-                  >
-                    Single / Moneyline / Spread / Player
-                  </button>
-                  <button
-                    className="btn"
-                    onClick={() => {
-                      setTab("parlay");
-                      setPhase("menu");
-                    }}
-                  >
-                    Parlay
-                  </button>
-                  <button
-                    className="btn"
-                    onClick={() => {
-                      setTab("batch");
-                      setPhase("menu");
-                    }}
-                  >
-                    Batch JSON
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+            <div className="text-white/60 text-sm mt-2">Loading... {bootProgress}%</div>
+          </div>
         </div>
       )}
 
-      {/* Main app only when in menu phase */}
-      {phase === "menu" && (
+      {/* MAIN MENU with 4 sprites */}
+      {phase === "main" && (
+        <div
+          className="min-h-screen relative flex items-center justify-center bg-cover bg-center"
+          style={{ backgroundImage: `url(/assets/menu/main-menu-bg.png)` }}
+        >
+          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.35),rgba(0,0,0,0.85))]" />
+
+          <div className="relative container mx-auto px-4 py-10">
+            <div className="flex items-center gap-3 text-white/80 text-sm mb-4">
+              <TrendingUp size={16} />
+              <span>Best Bet NFL</span>
+            </div>
+
+            <h1 className="text-2xl md:text-3xl font-bold text-white mb-6">Main Menu</h1>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+              {(["place", "stats", "settings", "exit"] as MenuKey[]).map((k) => {
+                const s = menuSprites[k];
+                const active = hoverKey === k || focusKey === k;
+                const src = active ? s.color : s.bw;
+                return (
+                  <button
+                    key={k}
+                    className="group bg-black/40 border border-white/10 rounded-2xl p-4 hover:border-white/30 focus:border-white/30 transition"
+                    onMouseEnter={() => setHoverKey(k)}
+                    onMouseLeave={() => setHoverKey(null)}
+                    onFocus={() => setFocusKey(k)}
+                    onBlur={() => setFocusKey(null)}
+                    onClick={() => selectMenu(k)}
+                  >
+                    <div className="w-full aspect-square rounded-xl bg-black/30 overflow-hidden mb-3 flex items-center justify-center">
+                      <img
+                        src={src}
+                        alt={s.label}
+                        className="object-contain w-[85%] h-[85%] transition"
+                        onError={(e) => ((e.currentTarget as HTMLImageElement).style.display = "none")}
+                      />
+                    </div>
+                    <div className="text-center text-sm font-semibold">{s.label}</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Dialogue box below sprites with matching prompt & colored sprite */}
+            <div className="mt-6 max-w-3xl">
+              {(() => {
+                const k = hoverKey ?? focusKey ?? ("place" as MenuKey);
+                const s = menuSprites[k];
+                return (
+                  <DialogueBox
+                    spriteSrc={s.color}
+                    title={s.label}
+                    lines={s.lines}
+                  />
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* PLACE BET AREA (tabs) */}
+      {phase === "placebet" && (
         <div className="min-h-screen">
           {/* Header */}
           <div
             className="relative min-h-[220px] flex items-end bg-cover bg-center"
-            style={{ backgroundImage: `url(${heroBg})` }}
+            style={{ backgroundImage: `url(${placeBg})` }}
           >
             <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.4),rgba(0,0,0,0.85))]" />
             <div className="relative container mx-auto px-4 py-10">
@@ -482,7 +492,7 @@ export default function Page() {
 
           {/* Body */}
           <div className="container mx-auto px-4 py-8 grid md:grid-cols-3 gap-6">
-            {/* Left menu */}
+            {/* Left tabs */}
             <div className="card h-fit">
               <div className="text-sm uppercase tracking-widest text-white/60 mb-3">Sections</div>
               <div className="grid gap-2">
@@ -498,9 +508,9 @@ export default function Page() {
               </div>
             </div>
 
-            {/* Right panels (only one renders at a time) */}
+            {/* Right panels (exclusive) */}
             <div className="md:col-span-2 grid gap-6">
-              {/* SINGLE (only on tab === 'single') */}
+              {/* SINGLE */}
               {tab === "single" && (
                 <div className="card">
                   <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -526,7 +536,7 @@ export default function Page() {
 
                     {betMode === "team" && (
                       <div className="text-white/60 text-sm flex items-center gap-2">
-                        <Percent size={16} />
+                        <Percent size={16}/>
                         Implied: {pct01(impliedFromAmerican(((single as any).american_odds as number) ?? 0))}
                       </div>
                     )}
@@ -582,7 +592,7 @@ export default function Page() {
                           <input
                             className="input"
                             type="number"
-                            value={clampNum((single as any).line, 0)}
+                            value={Number((single as any).line ?? 0)}
                             onChange={(e) => setSingle({ ...(single as any), line: Number(e.target.value) } as any)}
                           />
                         </div>
@@ -593,7 +603,7 @@ export default function Page() {
                         <input
                           className="input"
                           type="number"
-                          value={clampNum((single as any).american_odds, 0)}
+                          value={Number((single as any).american_odds ?? 0)}
                           onChange={(e) => setSingle({ ...(single as any), american_odds: Number(e.target.value) } as any)}
                         />
                       </div>
@@ -603,7 +613,7 @@ export default function Page() {
                         <input
                           className="input"
                           type="number"
-                          value={clampNum((single as any).stake, 100)}
+                          value={Number((single as any).stake ?? 100)}
                           onChange={(e) => setSingle({ ...(single as any), stake: Number(e.target.value) } as any)}
                         />
                       </div>
@@ -615,11 +625,7 @@ export default function Page() {
                     <div className="grid md:grid-cols-2 gap-4">
                       <div className="grid gap-2">
                         <label className="label">Player</label>
-                        <input
-                          className="input"
-                          value={playerName}
-                          onChange={(e) => setPlayerName(e.target.value)}
-                        />
+                        <input className="input" value={playerName} onChange={(e) => setPlayerName(e.target.value)} />
                       </div>
 
                       <div className="grid gap-2">
@@ -696,7 +702,7 @@ export default function Page() {
                 </div>
               )}
 
-              {/* PARLAY (only on tab === 'parlay') */}
+              {/* PARLAY */}
               {tab === "parlay" && (
                 <div className="card">
                   <div className="flex items-center justify-between mb-3">
@@ -869,7 +875,7 @@ export default function Page() {
                 </div>
               )}
 
-              {/* BATCH (only on tab === 'batch') */}
+              {/* BATCH */}
               {tab === "batch" && (
                 <div className="card">
                   <div className="flex items-center justify-between mb-3">
@@ -892,11 +898,9 @@ export default function Page() {
               )}
 
               {/* DIALOGUE SUMMARY (above results; appears when result exists) */}
-              {result && (
-                <DialogueSummary result={result} />
-              )}
+              {result && <DialogueSummary result={result} />}
 
-              {/* RESULTS (kept exactly as requested) */}
+              {/* RESULTS (keep as-is) */}
               <div className="card">
                 <div className="flex items-center gap-2 mb-3">
                   <Info size={16} />
@@ -908,15 +912,68 @@ export default function Page() {
               </div>
             </div>
           </div>
+        </div>
+      )}
 
-          <div className="footer">
-            © {new Date().getFullYear()} Best Bet NFL — Educational use only. Not financial advice.
+      {/* MY STATS (stub screen) */}
+      {phase === "stats" && (
+        <div
+          className="min-h-screen relative flex items-end bg-cover bg-center"
+          style={{ backgroundImage: `url(/assets/bg/bg-stats.png)` }}
+        >
+          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.4),rgba(0,0,0,0.85))]" />
+          <div className="relative container mx-auto px-4 py-10">
+            <div className="flex items-center gap-3 text-white/80 text-sm">
+              <TrendingUp size={16} />
+              <span>Best Bet NFL</span>
+            </div>
+            <h1 className="text-2xl md:text-3xl font-bold mt-2">My Stats</h1>
+            <p className="text-white/70 max-w-3xl mt-2">
+              Session totals, hit rates, EV and profit tracking (coming soon).
+            </p>
+            <div className="mt-4">
+              <button className="btn" onClick={() => setPhase("main")}>
+                <ArrowLeft size={16} className="mr-2" />
+                Back
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SETTINGS */}
+      {phase === "settings" && (
+        <div
+          className="min-h-screen relative flex items-end bg-cover bg-center"
+          style={{ backgroundImage: `url(/assets/bg/bg-settings.png)` }}
+        >
+          <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,0.4),rgba(0,0,0,0.85))]" />
+          <div className="relative container mx-auto px-4 py-10">
+            <div className="flex items-center gap-3 text-white/80 text-sm">
+              <TrendingUp size={16} />
+              <span>Best Bet NFL</span>
+            </div>
+            <h1 className="text-2xl md:text-3xl font-bold mt-2">Settings</h1>
+            <p className="text-white/70 max-w-3xl mt-2">
+              Refresh weekly stats and tweak preferences.
+            </p>
+            <div className="mt-4 flex gap-2">
+              <button className="btn" onClick={() => setPhase("main")}>
+                <ArrowLeft size={16} className="mr-2" />
+                Back
+              </button>
+              <button className="btn" onClick={doRefresh} disabled={busy}>
+                <RefreshCw size={16} className="mr-2" />
+                Refresh weekly stats
+              </button>
+            </div>
           </div>
         </div>
       )}
     </>
   );
 }
+
 
 
 
