@@ -187,7 +187,8 @@ def debug_team_allowed(team: str, metric: str):
     try:
         return engine.get_team_allowed(team, metric)
     except Exception as e:
-        raise HTTPException(status_code=400, detail:str(e))
+        # fixed: use str(e) instead of detail:str(e)
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/debug/sanity/prop")
 def sanity_prop(
@@ -232,4 +233,5 @@ def sanity_prop(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"sanity_prop failed: {e}")
+
 
