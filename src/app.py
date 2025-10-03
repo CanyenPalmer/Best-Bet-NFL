@@ -58,6 +58,31 @@ def cron_refresh():
 def snapshot():
     return service.get_snapshot()
 
+# --- lists / suggestions (added) ---
+@app.get("/lists/players")
+def list_players(prefix: str = Query("", description="Prefix match (case-insensitive)"), limit: int = 50):
+    """Return player name suggestions."""
+    try:
+        return service.list_players(prefix=prefix, limit=limit)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"list players failed: {e}")
+
+@app.get("/lists/teams")
+def list_teams(prefix: str = Query("", description="Prefix match (uppercase team abbr)"), limit: int = 50):
+    """Return team abbreviation suggestions."""
+    try:
+        return service.list_teams(prefix=prefix, limit=limit)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"list teams failed: {e}")
+
+@app.get("/lists/prop-kinds")
+def list_prop_kinds():
+    """Return available prop kind keys."""
+    try:
+        return service.list_prop_kinds()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"list prop kinds failed: {e}")
+
 # --- OPTIONS preflight (explicit) ---
 @app.options("/evaluate/single")
 def options_single():
@@ -162,7 +187,7 @@ def debug_team_allowed(team: str, metric: str):
     try:
         return engine.get_team_allowed(team, metric)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail:str(e))
 
 @app.get("/debug/sanity/prop")
 def sanity_prop(
@@ -207,3 +232,4 @@ def sanity_prop(
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"sanity_prop failed: {e}")
+
