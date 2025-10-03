@@ -1,77 +1,84 @@
-// web/src/lib/api.ts
-const RAW_BASE = (process.env.NEXT_PUBLIC_API_BASE_URL || "").trim();
-// Normalize: remove trailing slash if present
-const BASE = RAW_BASE.endsWith("/") ? RAW_BASE.slice(0, -1) : RAW_BASE;
+// Minimal, safe client for your backend.
+// IMPORTANT: Set NEXT_PUBLIC_API_BASE in Vercel to your backend origin, e.g.
+// https://your-fastapi-backend.example.com
+const API_BASE =
+  (process.env.NEXT_PUBLIC_API_BASE ?? "").replace(/\/+$/, "") || "";
 
-function url(path: string) {
-  const p = path.startsWith("/") ? path : `/${path}`;
-  return `${BASE}${p}`;
-}
+type Json = Record<string, any>;
 
-async function post<T>(path: string, body: unknown): Promise<T> {
-  const endpoint = url(path);
-  try {
-    const r = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      // mode: "cors"  // default in browsers, but explicit is fine if you prefer
-    });
-    if (!r.ok) {
-      const text = await r.text().catch(() => "");
-      throw new Error(`API ${r.status} ${r.statusText} @ ${endpoint}\n${text}`);
-    }
-    return r.json();
-  } catch (e: any) {
-    // Make network/CORS errors obvious
-    const m = e?.message || String(e);
-    throw new Error(`Failed to reach API @ ${endpoint}\n${m}`);
+// Helpers
+async function post<T>(path: string, body: Json): Promise<T> {
+  if (!API_BASE) {
+    throw new Error(
+      "API base URL is not set. Define NEXT_PUBLIC_API_BASE in your environment."
+    );
   }
+  const url = `${API_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+    // You can add credentials/cors if your backend needs it:
+    // mode: "cors",
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API ${res.status} @ ${path}${text ? ` — ${text}` : ""}`);
+  }
+  return (await res.json()) as T;
 }
 
-export type SingleReq = {
-  market: "prop" | "moneyline" | "spread";
-  stake: number;
-  odds: number;
-  // prop
-  player?: string;
-  opponent_team?: string;
-  prop_kind?: string;
-  side?: "over" | "under";
-  line?: number;
-  // team
-  team?: string;
-  opponent?: string;
-  // spread
-  spread_line?: number;
-};
+async function postNoBody<T>(path: string): Promise<T> {
+  if (!API_BASE) {
+    throw new Error(
+      "API base URL is not set. Define NEXT_PUBLIC_API_BASE in your environment."
+    );
+  }
+  const url = `${API_BASE}${path.startsWith("/") ? "" : "/"}${path}`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API ${res.status} @ ${path}${text ? ` — ${text}` : ""}`);
+  }
+  return (await res.json()) as T;
+}
 
+/** Types coming from your backend — keep as-is (runtime uses "any" where needed) */
+export type SingleReq = Record<string, unknown>;
 export type SingleResp = {
-  label: string;
   probability: number;
-  probability_pct: string;
-  payout_if_win: number;
   expected_value: number;
-  summary: string;
-  debug: Record<string, unknown>;
-  odds?: number;
 };
-
-export type ParlayReq = { stake: number; legs: SingleReq[]; };
-
+export type ParlayReq = Record<string, unknown>;
 export type ParlayResp = {
-  stake: number;
-  legs: { label: string; probability: number; probability_pct: string; odds: number }[];
   parlay_probability_independent_pct: string;
-  payout_if_win: number;
   expected_value: number;
-  combined_decimal_odds: number;
+  payout_if_win: number;
 };
 
 export const api = {
-  single: (req: SingleReq) => post<SingleResp>("/evaluate/single", req),
-  parlay: (req: ParlayReq) => post<ParlayResp>("/evaluate/parlay", req),
-  batch: (payload: unknown) => post("/evaluate/batch", payload),
-  refresh: () => post("/refresh-data", {}),
+  /** Team or Player single endpoints share the same evaluator on many backends. */
+  async single(payload: SingleReq): Promise<SingleResp> {
+    return await post<SingleResp>("/evaluate/single", payload as Json);
+  },
+  async parlay(payload: ParlayReq): Promise<ParlayResp> {
+    return await post<ParlayResp>("/evaluate/parlay", payload as Json);
+  },
+  async batch(payload: Json): Promise<{
+    singles: SingleResp[];
+    parlays: ParlayResp[];
+  }> {
+    return await post("/evaluate/batch", payload);
+  },
+  /** Refresh underlying data on the backend (POST to avoid 405). */
+  async refresh(): Promise<{ status: string }> {
+    // If your backend expects a GET, you can switch to get — but many use POST.
+    return await postNoBody("/refresh");
+  },
 };
+
 
